@@ -11,7 +11,7 @@ Except for libarm64ecfex.dll, which is necessary for x86_64 emulation.
 To build Hangover Wine you need:
 
 - The dependencies to [build](https://wiki.winehq.org/Building_Wine#Satisfying_Build_Dependencies) a 64 bit Wine
-- [bylaws-llvm-mingw](https://github.com/bylaws/llvm-mingw) for PE cross-compilation (downlaod & unpack a release, but don't use the .zip files, they are for Windows)
+- [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) for PE cross-compilation (downlaod & unpack a release, but don't use the .zip files, they are for Windows)
 - About 5GB of disk space
 
 If you don't want to run 32-Bit ARM applications, you can drop ",arm" from the configure line.
@@ -39,7 +39,7 @@ $ sudo env PATH="$PATH" make install
 #### FEX for 64-bit
 To build wow64fex from FEX you need:
 
-- [bylaws-llvm-mingw](https://github.com/bylaws/llvm-mingw) for PE cross-compilation (downlaod & unpack a release, but don't use the .zip files, they are for Windows)
+- [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) for PE cross-compilation (downlaod & unpack a release, but don't use the .zip files, they are for Windows)
 - About 1.5GB of disk space
 
 Build it like (from the Hangover repository):
@@ -58,7 +58,7 @@ Place resulting library (build_ec/Bin/libarm64ecfex.dll) in your wine prefix und
 #### FEX for 32-bit (optional)
 To build wow64fex from FEX you need:
 
-- [bylaws-llvm-mingw](https://github.com/bylaws/llvm-mingw) for PE cross-compilation (downlaod & unpack a release, but don't use the .zip files, they are for Windows)
+- [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) for PE cross-compilation (downlaod & unpack a release, but don't use the .zip files, they are for Windows)
 - About 1.5GB of disk space
 
 Build it like (from the Hangover repository):
