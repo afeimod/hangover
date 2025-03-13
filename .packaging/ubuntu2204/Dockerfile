@@ -65,5 +65,5 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libwayland-dev:arm64 \
     meson glslang-dev glslang-tools
 
-RUN cd /opt; wget https://github.com/bylaws/llvm-mingw/releases/download/20250305/llvm-mingw-20250305-ucrt-ubuntu-20.04-x86_64.tar.xz; tar -xJf llvm-mingw-20250305-ucrt-ubuntu-20.04-x86_64.tar.xz; rm *.tar.xz; mv llvm-mingw-20250305-ucrt-ubuntu-20.04-x86_64 bylaws-llvm-mingw-20250305-ucrt-ubuntu-20.04-x86_64
-RUN cd /opt; wget https://github.com/mstorsjo/llvm-mingw/releases/download/20250227/llvm-mingw-20250227-ucrt-ubuntu-20.04-x86_64.tar.xz; tar -xJf llvm-mingw-20250227-ucrt-ubuntu-20.04-x86_64.tar.xz; rm *.tar.xz
+RUN cd /opt; wget https://github.com/bylaws/llvm-mingw/releases/download/20240929/llvm-mingw-20240929-ucrt-ubuntu-20.04-x86_64.tar.xz; tar -xJf llvm-mingw-20240929-ucrt-ubuntu-20.04-x86_64.tar.xz; rm *.tar.xz; mv llvm-mingw-20240929-ucrt-ubuntu-20.04-x86_64 bylaws-llvm-mingw-20240929-ucrt-ubuntu-20.04-x86_64
+RUN cd /opt; wget https://github.com/mstorsjo/llvm-mingw/releases/download/20250305/llvm-mingw-20250305-ucrt-ubuntu-20.04-x86_64.tar.xz; tar -xJf llvm-mingw-20250305-ucrt-ubuntu-20.04-x86_64.tar.xz; rm *.tar.xz

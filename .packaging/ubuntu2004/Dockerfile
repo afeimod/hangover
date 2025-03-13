@@ -62,4 +62,4 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxkbcommon-dev:arm64 \
     libwayland-dev:arm64
 
-RUN cd /opt; wget https://github.com/mstorsjo/llvm-mingw/releases/download/20250227/llvm-mingw-20250227-ucrt-ubuntu-20.04-x86_64.tar.xz; tar -xJf llvm-mingw-20250227-ucrt-ubuntu-20.04-x86_64.tar.xz; rm *.tar.xz
+RUN cd /opt; wget https://github.com/mstorsjo/llvm-mingw/releases/download/20250305/llvm-mingw-20250305-ucrt-ubuntu-20.04-x86_64.tar.xz; tar -xJf llvm-mingw-20250305-ucrt-ubuntu-20.04-x86_64.tar.xz; rm *.tar.xz
