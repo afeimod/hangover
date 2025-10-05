@@ -58,7 +58,7 @@ jobs:
         path: foundation${{ matrix.os }}.tgz
         retention-days: 1
 
-  fex-latest:
+  fex:
     needs: foundations
     runs-on: ubuntu-latest
     strategy:
@@ -127,21 +127,21 @@ jobs:
     - name: Build FEX
       run: |
         cd fex
-        docker build -t fex-latest-${{ matrix.os }} .
+        docker build -t fex-${{ matrix.os }} .
 
     - name: Extract FEX binaries
       run: |
         mkdir -p fex-output-${{ matrix.os }}
-        docker run --rm -v $(pwd)/fex-output-${{ matrix.os }}:/output fex-latest-${{ matrix.os }} bash -c "cp -r /opt/fex/build/Bin/* /output/ 2>/dev/null || true"
+        docker run --rm -v $(pwd)/fex-output-${{ matrix.os }}:/output fex-${{ matrix.os }} bash -c "cp -r /opt/fex/build/Bin/* /output/ 2>/dev/null || true"
 
     - name: Upload FEX artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: fex-latest-${{ matrix.os }}-${{ env.HOVERSION }}
+        name: fex-${{ matrix.os }}-${{ env.HOVERSION }}
         path: fex-output-${{ matrix.os }}/
         retention-days: 7
 
-  wine-9-2:
+  wine:
     needs: foundations
     runs-on: ubuntu-latest
     strategy:
@@ -240,22 +240,22 @@ jobs:
     - name: Build Wine 9.2
       run: |
         cd wine
-        docker build -t wine-9.2-${{ matrix.os }} .
+        docker build -t wine-${{ matrix.os }} .
 
     - name: Extract Wine binaries
       run: |
         mkdir -p wine-output-${{ matrix.os }}
-        docker run --rm -v $(pwd)/wine-output-${{ matrix.os }}:/output wine-9.2-${{ matrix.os }} bash -c "cp -r /opt/wine/* /output/ 2>/dev/null || true"
+        docker run --rm -v $(pwd)/wine-output-${{ matrix.os }}:/output wine-${{ matrix.os }} bash -c "cp -r /opt/wine/* /output/ 2>/dev/null || true"
 
     - name: Upload Wine artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: wine-9.2-${{ matrix.os }}-${{ env.HOVERSION }}
+        name: wine-${{ matrix.os }}-${{ env.HOVERSION }}
         path: wine-output-${{ matrix.os }}/
         retention-days: 7
 
   create-release-bundle:
-    needs: [fex-latest, wine-9.2]
+    needs: [fex, wine]
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -276,13 +276,13 @@ jobs:
     - name: Download FEX artifacts
       uses: actions/download-artifact@v4
       with:
-        pattern: fex-latest-${{ matrix.os }}-*
+        pattern: fex-${{ matrix.os }}-*
         path: fex-artifacts-${{ matrix.os }}
 
     - name: Download Wine artifacts
       uses: actions/download-artifact@v4
       with:
-        pattern: wine-9.2-${{ matrix.os }}-*
+        pattern: wine-${{ matrix.os }}-*
         path: wine-artifacts-${{ matrix.os }}
 
     - name: Create release bundle
