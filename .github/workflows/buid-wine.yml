@@ -1,11 +1,15 @@
-name: Build FEX and Wine 9.2
+name: Build Latest FEX and Wine 9.2
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - main
-      - master
+      - '**'
+    paths-ignore:
+      - 'benchmarks/**'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - 'README.md'
 
 jobs:
   foundations:
@@ -13,15 +17,10 @@ jobs:
     strategy:
       matrix:
         os: [debian13, ubuntu2404]
-        include:
-          - os: debian13
-            codename: trixie
-          - os: ubuntu2404
-            codename: noble
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Free disk space
+    - uses: actions/checkout@v1
+    - name: free disk space
       run: |
         sudo swapoff -a
         sudo rm -f /swapfile
@@ -43,7 +42,7 @@ jobs:
       run: |
         cp .packaging/${{ matrix.os }}/Dockerfile .
 
-    - name: Build foundation image
+    - name: Build package
       if: ${{ steps.cache-foundation.outputs.cache-hit != 'true' }}
       run: docker build -t foundation${{ matrix.os }} .
 
@@ -51,97 +50,75 @@ jobs:
       if: ${{ steps.cache-foundation.outputs.cache-hit != 'true' }}
       run: docker image save foundation${{ matrix.os }} | gzip -c > foundation${{ matrix.os }}.tgz
 
-    - name: Upload foundation artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: foundation-${{ matrix.os }}
-        path: foundation${{ matrix.os }}.tgz
-        retention-days: 1
-
-  fex:
+  fex-latest:
     needs: foundations
     runs-on: ubuntu-latest
     strategy:
       matrix:
         os: [debian13, ubuntu2404]
-        include:
-          - os: debian13
-            codename: trixie
-          - os: ubuntu2404
-            codename: noble
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Free disk space
+    - uses: actions/checkout@v1
+    - name: free disk space
       run: |
         sudo swapoff -a
         sudo rm -f /swapfile
         sudo apt clean
         df -h
 
-    - name: Download foundation artifact
-      uses: actions/download-artifact@v4
+    - name: Cache docker image
+      id: cache-foundation
+      uses: actions/cache@v4
+      env:
+        cache-name: cache-foundation
       with:
-        name: foundation-${{ matrix.os }}
-        path: ./
+        path: foundation${{ matrix.os }}.tgz
+        key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles(format('.packaging/{0}/Dockerfile', matrix.os)) }}
 
     - name: Import docker image
       run: docker image load -i foundation${{ matrix.os }}.tgz
 
-    - name: Get version
-      run: |
-        git describe --tags --always | sed "s/hangover-/HOVERSION=/" >> "$GITHUB_ENV"
-        echo "HOVERSION=${{ env.HOVERSION }}"
+    - name: get version
+      run: git describe --tags | sed "s/hangover-/HOVERSION=/" >> "$GITHUB_ENV"; git describe --tags | sed "s/hangover-/HOVERSION=/"
 
     - name: Clone latest FEX
       run: |
-        if [ -d "fex" ]; then
-          rm -rf fex
-        fi
-        git clone --depth 1 --branch main https://github.com/FEX-Emu/FEX.git fex
+        rm -rf fex-latest
+        git clone --depth 1 --branch main https://github.com/FEX-Emu/FEX.git fex-latest
 
     - name: Setup FEX packaging
       run: |
-        # 使用现有的打包配置或创建最小化配置
-        mkdir -p fex/DEBIAN
-        cat > fex/DEBIAN/control << EOF
-        Package: hangover-fex-latest
-        Version: ${{ env.HOVERSION }}
-        Architecture: arm64
-        Maintainer: Build Script <build@example.com>
-        Description: Latest FEX emulator built for Hangover
-        EOF
-        
-        # 创建简化的 Dockerfile
-        cat > fex/Dockerfile << EOF
-        FROM foundation${{ matrix.os }}
-        WORKDIR /opt/fex
-        COPY . .
-        RUN mkdir -p build && cd build && \
-            cmake -DCMAKE_BUILD_TYPE=Release .. && \
-            make -j\$(nproc)
-        WORKDIR /opt
-        RUN mkdir -p deb
-        EOF
+        cp -r .packaging/${{ matrix.os }}/fexpe/* fex-latest
+        cp fex-latest/LICENSE fex-latest/DEBIAN/copyright
+        sed -i "s/HOVERSION/${HOVERSION}/g" fex-latest/Dockerfile
+        sed -i "s/HOVERSION/${HOVERSION}/g" fex-latest/DEBIAN/control
+        # 更新版本信息
+        sed -i "s/starting FEX based/starting FEX (Hangover ${HOVERSION}) based/g" fex-latest/Source/Windows/ARM64EC/Module.cpp
+        sed -i "s/starting FEX based/starting FEX (Hangover ${HOVERSION}) based/g" fex-latest/Source/Windows/WOW64/Module.cpp
+        nproc
 
-    - name: Build FEX
-      run: |
-        cd fex
-        docker build -t fex-${{ matrix.os }} .
+    - name: Build FEX package
+      run: cd fex-latest; docker build -t fex-latest-${{ matrix.os }} .
 
-    - name: Extract FEX binaries
-      run: |
-        mkdir -p fex-output-${{ matrix.os }}
-        docker run --rm -v $(pwd)/fex-output-${{ matrix.os }}:/output fex-${{ matrix.os }} bash -c "cp -r /opt/fex/build/Bin/* /output/ 2>/dev/null || true"
+    - name: Extract FEX package
+      run: docker run --rm fex-latest-${{ matrix.os }} cat /opt/deb/hangover-libwow64fex_${{ env.HOVERSION }}_arm64.deb > hangover-libwow64fex-latest_${{ env.HOVERSION }}_${{ matrix.os }}_arm64.deb
 
-    - name: Upload FEX artifacts
+    - name: Extract FEX dll
+      run: docker run --rm fex-latest-${{ matrix.os }} cat /opt/fex/build/Bin/libwow64fex.dll > libwow64fex-latest_${{ matrix.os }}.dll
+
+    - name: Upload FEX deb as Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: fex-${{ matrix.os }}-${{ env.HOVERSION }}
-        path: fex-output-${{ matrix.os }}/
-        retention-days: 7
+        name: hangover-libwow64fex-latest_${{ env.HOVERSION }}_${{ matrix.os }}_arm64.deb
+        path: hangover-libwow64fex-latest_${{ env.HOVERSION }}_${{ matrix.os }}_arm64.deb
 
-  wine:
+    - name: Upload FEX dll as Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: libwow64fex-latest_${{ matrix.os }}.dll
+        path: libwow64fex-latest_${{ matrix.os }}.dll
+
+  wine-9.2:
     needs: foundations
     runs-on: ubuntu-latest
     strategy:
@@ -154,108 +131,84 @@ jobs:
             codename: noble
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Free disk space
+    - uses: actions/checkout@v1
+    - name: free disk space
       run: |
         sudo swapoff -a
         sudo rm -f /swapfile
         sudo apt clean
         df -h
 
-    - name: Download foundation artifact
-      uses: actions/download-artifact@v4
+    - name: Cache docker image
+      id: cache-foundation
+      uses: actions/cache@v4
+      env:
+        cache-name: cache-foundation
       with:
-        name: foundation-${{ matrix.os }}
-        path: ./
+        path: foundation${{ matrix.os }}.tgz
+        key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles(format('.packaging/{0}/Dockerfile', matrix.os)) }}
 
     - name: Import docker image
       run: docker image load -i foundation${{ matrix.os }}.tgz
 
-    - name: Get version
-      run: |
-        echo "WINE_VERSION=9.2" >> "$GITHUB_ENV"
-        git describe --tags --always | sed "s/hangover-/HOVERSION=/" >> "$GITHUB_ENV"
+    - name: get version
+      run: git describe --tags | sed "s/hangover-/HOVERSION=/" >> "$GITHUB_ENV"; git describe --tags | sed "s/hangover-/HOVERSION=/"
 
     - name: Clone Wine 9.2
       run: |
-        if [ -d "wine" ]; then
-          rm -rf wine
-        fi
-        git clone --depth 1 --branch wine-9.2 https://github.com/wine-mirror/wine.git wine
+        rm -rf wine-9.2
+        git clone --depth 1 --branch wine-9.2 https://github.com/wine-mirror/wine.git wine-9.2
 
-    - name: Setup Wine packaging
+    - name: Setup Wine 9.2 packaging
       run: |
-        mkdir -p wine/debian
-        # 创建简化的 control 文件
-        cat > wine/debian/control << EOF
-        Source: hangover-wine-9.2
-        Package: hangover-wine-9.2
-        Version: ${{ env.HOVERSION }}~${{ matrix.codename }}
-        Architecture: arm64
-        Maintainer: Build Script <build@example.com>
-        Description: Wine 9.2 built for Hangover
-        EOF
+        cp -r .packaging/${{ matrix.os }}/wine/* wine-9.2
+        sed -i "s/HOVERSION/${HOVERSION}/g" wine-9.2/Dockerfile
+        nproc
 
-        # 创建 changelog
-        cat > wine/debian/changelog << EOF
-        hangover-wine-9.2 (${{ env.HOVERSION }}~${{ matrix.codename }}) ${{ matrix.codename }}; urgency=medium
-
-          * Wine 9.2 build for Hangover
-
-         -- Build Script <build@example.com>  $(date -R)
-        EOF
-
-        # 创建简化的 Dockerfile
-        cat > wine/Dockerfile << EOF
-        FROM foundation${{ matrix.os }}
-        WORKDIR /opt/wine
-        COPY . .
-        
-        # 安装构建依赖
-        RUN apt-get update && apt-get install -y \
-            build-essential \
-            flex \
-            bison \
-            libfreetype-dev \
-            libx11-dev \
-            libxext-dev \
-            libxi-dev \
-            libxrandr-dev \
-            libxcursor-dev \
-            libasound2-dev \
-            libpulse-dev \
-            libudev-dev \
-            libfontconfig1-dev \
-            libvulkan-dev \
-            mesa-common-dev \
-            libglu1-mesa-dev
-        
-        # 配置和编译
-        RUN ./configure --enable-win64 --without-freetype --without-x --without-alsa --without-pulse
-        RUN make -j\$(nproc)
-        
-        WORKDIR /opt
-        EOF
-
-    - name: Build Wine 9.2
+    - name: Adjust changelog for Wine 9.2
+      if: github.event_name != 'release'
       run: |
-        cd wine
-        docker build -t wine-${{ matrix.os }} .
+        cp wine-9.2/debian/changelog wine-9.2/debian/changelog.old
+        echo "hangover-wine-9.2 (${HOVERSION}~${{ matrix.codename }}) UNRELEASED; urgency=low" > wine-9.2/debian/changelog.entry
+        echo "" >> wine-9.2/debian/changelog.entry
+        echo "  * Wine 9.2 build ${HOVERSION}~${{ matrix.codename }}" >> wine-9.2/debian/changelog.entry
+        echo "" >> wine-9.2/debian/changelog.entry
+        echo -n " -- André Zwing <nerv@dawncrow.de>  " >> wine-9.2/debian/changelog.entry
+        LC_TIME=en_US.UTF-8 date "+%a, %d %b %Y %H:%M:%S %z" >> wine-9.2/debian/changelog.entry
+        echo "" >> wine-9.2/debian/changelog.entry
+        cat wine-9.2/debian/changelog.entry wine-9.2/debian/changelog.old > wine-9.2/debian/changelog
+        rm wine-9.2/debian/changelog.entry wine-9.2/debian/changelog.old
+        cat wine-9.2/debian/changelog
 
-    - name: Extract Wine binaries
+    - name: Adjust changelog for Wine 9.2 release
+      if: github.event_name == 'release'
       run: |
-        mkdir -p wine-output-${{ matrix.os }}
-        docker run --rm -v $(pwd)/wine-output-${{ matrix.os }}:/output wine-${{ matrix.os }} bash -c "cp -r /opt/wine/* /output/ 2>/dev/null || true"
+        cp wine-9.2/debian/changelog wine-9.2/debian/changelog.old
+        echo "hangover-wine-9.2 (${HOVERSION}~${{ matrix.codename }}) UNRELEASED; urgency=low" > wine-9.2/debian/changelog.entry
+        echo "" >> wine-9.2/debian/changelog.entry
+        echo "  * Wine 9.2 Release ${HOVERSION}~${{ matrix.codename }}" >> wine-9.2/debian/changelog.entry
+        echo "" >> wine-9.2/debian/changelog.entry
+        echo -n " -- André Zwing <nerv@dawncrow.de>  " >> wine-9.2/debian/changelog.entry
+        LC_TIME=en_US.UTF-8 date "+%a, %d %b %Y %H:%M:%S %z" >> wine-9.2/debian/changelog.entry
+        echo "" >> wine-9.2/debian/changelog.entry
+        cat wine-9.2/debian/changelog.entry wine-9.2/debian/changelog.old > wine-9.2/debian/changelog
+        rm wine-9.2/debian/changelog.entry wine-9.2/debian/changelog.old
+        cat wine-9.2/debian/changelog
 
-    - name: Upload Wine artifacts
+    - name: Build Wine 9.2 package
+      run: cd wine-9.2; docker build -t wine-9.2-${{ matrix.os }} .
+
+    - name: Extract Wine 9.2 package
+      run: docker run --rm wine-9.2-${{ matrix.os }} cat /opt/hangover-wine-9.2_${{ env.HOVERSION }}~${{ matrix.codename }}_arm64.deb > hangover-wine-9.2_${{ env.HOVERSION }}~${{ matrix.codename }}_arm64.deb
+
+    - name: Upload Wine 9.2 Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: wine-${{ matrix.os }}-${{ env.HOVERSION }}
-        path: wine-output-${{ matrix.os }}/
-        retention-days: 7
+        name: hangover-wine-9.2_${{ env.HOVERSION }}~${{ matrix.codename }}_arm64.deb
+        path: hangover-wine-9.2_${{ env.HOVERSION }}~${{ matrix.codename }}_arm64.deb
 
-  create-release-bundle:
-    needs: [fex, wine]
+  bundle-fex-wine92:
+    needs: [fex-latest, wine-9.2]
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -267,46 +220,49 @@ jobs:
             codename: noble
 
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Get version
+    - uses: actions/checkout@v1
+    - name: free disk space
       run: |
-        git describe --tags --always | sed "s/hangover-/HOVERSION=/" >> "$GITHUB_ENV"
+        sudo swapoff -a
+        sudo rm -f /swapfile
+        sudo apt clean
+        df -h
 
-    - name: Download FEX artifacts
+    - name: get version
+      run: git describe --tags | sed "s/hangover-/HOVERSION=/" >> "$GITHUB_ENV"; git describe --tags | sed "s/hangover-/HOVERSION=/"
+
+    - name: Download FEX Artifacts
       uses: actions/download-artifact@v4
       with:
-        pattern: fex-${{ matrix.os }}-*
-        path: fex-artifacts-${{ matrix.os }}
+        pattern: hangover-libwow64fex-latest_*_${{ matrix.os }}_arm64.deb
+        merge-multiple: true
 
-    - name: Download Wine artifacts
+    - name: Download Wine 9.2 Artifacts
       uses: actions/download-artifact@v4
       with:
-        pattern: wine-${{ matrix.os }}-*
-        path: wine-artifacts-${{ matrix.os }}
+        pattern: hangover-wine-9.2_*${{ matrix.codename }}_arm64.deb
+        merge-multiple: true
 
-    - name: Create release bundle
+    - name: Create FEX + Wine 9.2 bundle
       run: |
-        mkdir -p hangover-bundle-${{ matrix.os }}
-        cp -r fex-artifacts-${{ matrix.os }}/* hangover-bundle-${{ matrix.os }}/ 2>/dev/null || true
-        cp -r wine-artifacts-${{ matrix.os }}/* hangover-bundle-${{ matrix.os }}/ 2>/dev/null || true
-        
-        # 创建版本信息文件
-        cat > hangover-bundle-${{ matrix.os }}/build-info.txt << EOF
-        Hangover Build Bundle
-        Version: ${{ env.HOVERSION }}
-        OS: ${{ matrix.os }} (${{ matrix.codename }})
-        Components:
-          - FEX (latest)
-          - Wine 9.2
-        Build Date: $(date)
-        EOF
-        
-        tar -czf hangover-fex-wine92-${{ matrix.os }}-${{ env.HOVERSION }}.tar.gz hangover-bundle-${{ matrix.os }}
+        tar -cf hangover_fex-latest_wine-9.2_${{ env.HOVERSION }}_${{ matrix.os }}_${{ matrix.codename }}_arm64.tar \
+          hangover-libwow64fex-latest_*_${{ matrix.os }}_arm64.deb \
+          hangover-wine-9.2_*${{ matrix.codename }}_arm64.deb
 
-    - name: Upload final bundle
+    - name: Upload FEX+Wine9.2 Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: hangover-fex-wine92-${{ matrix.os }}-${{ env.HOVERSION }}
-        path: hangover-fex-wine92-${{ matrix.os }}-${{ env.HOVERSION }}.tar.gz
-        retention-days: 30
+        name: hangover_fex-latest_wine-9.2_${{ env.HOVERSION }}_${{ matrix.os }}_${{ matrix.codename }}_arm64.tar
+        path: hangover_fex-latest_wine-9.2_${{ env.HOVERSION }}_${{ matrix.os }}_${{ matrix.codename }}_arm64.tar
+        retention-days: 14
+
+    - name: Upload Artifact as Release Asset
+      if: github.event_name == 'release'
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: hangover_fex-latest_wine-9.2_${{ env.HOVERSION }}_${{ matrix.os }}_${{ matrix.codename }}_arm64.tar
+        asset_name: hangover_fex-latest_wine-9.2_${{ env.HOVERSION }}_${{ matrix.os }}_${{ matrix.codename }}_arm64.tar
+        asset_content_type: application/x-tar
