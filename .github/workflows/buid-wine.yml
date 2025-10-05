@@ -141,17 +141,17 @@ jobs:
         path: fex-output-${{ matrix.os }}/
         retention-days: 7
 
-    wine-9.2:
-      needs: foundations
-      runs-on: ubuntu-latest
-      strategy:
-        matrix:
-          os: [debian13, ubuntu2404]
-          include:
-            - os: debian13
-              codename: trixie
-            - os: ubuntu2404
-              codename: noble
+  wine-9-2:
+    needs: foundations
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [debian13, ubuntu2404]
+        include:
+          - os: debian13
+            codename: trixie
+          - os: ubuntu2404
+            codename: noble
 
     steps:
     - uses: actions/checkout@v4
