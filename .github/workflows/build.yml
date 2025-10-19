@@ -1,0 +1,533 @@
+name: deb打包
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - '**'
+    paths-ignore:
+      - 'benchmarks/**'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - 'README.md'
+  release:
+    types: [published]
+
+jobs:
+  foundations:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [debian11, debian12, debian13, ubuntu2004, ubuntu2204, ubuntu2404, ubuntu2504]
+
+    steps:
+    - uses: actions/checkout@v1
+    - name: free disk space
+      run: |
+        sudo swapoff -a
+        sudo rm -f /swapfile
+        sudo apt clean
+        df -h
+
+    - name: Cache docker image
+      id: cache-foundation
+      uses: actions/cache@v4
+      env:
+        cache-name: cache-foundation
+      with:
+        path: foundation${{ matrix.os }}.tgz
+        key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles(format('.packaging/{0}/Dockerfile', matrix.os)) }}
+        lookup-only: true
+
+    - name: Setup packaging
+      if: ${{ steps.cache-foundation.outputs.cache-hit != 'true' }}
+      run: |
+        cp .packaging/${{ matrix.os }}/Dockerfile .
+
+    - name: Build package
+      if: ${{ steps.cache-foundation.outputs.cache-hit != 'true' }}
+      run: docker build -t foundation${{ matrix.os }} .
+
+    - name: Export docker image
+      if: ${{ steps.cache-foundation.outputs.cache-hit != 'true' }}
+      run: docker image save foundation${{ matrix.os }} | gzip -c > foundation${{ matrix.os }}.tgz
+
+
+  fex-pe:
+    needs: foundations
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v1
+    - name: free disk space
+      run: |
+        sudo swapoff -a
+        sudo rm -f /swapfile
+        sudo apt clean
+        df -h
+
+    - name: Cache docker image
+      id: cache-foundation
+      uses: actions/cache@v4
+      env:
+        cache-name: cache-foundation
+      with:
+        path: foundationubuntu2204.tgz
+        key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('.packaging/ubuntu2204/Dockerfile') }}
+
+    - name: Import docker image
+      run: docker image load -i foundationubuntu2204.tgz
+
+    - name: get version
+      run: git describe --tags | sed "s/hangover-/HOVERSION=/" >> "$GITHUB_ENV"; git describe --tags | sed "s/hangover-/HOVERSION=/"
+
+    - name: get shallow submodule
+      run: git submodule update --init --recursive --depth 1 fex
+
+    - name: Setup packaging
+      run: |
+        cp -r .packaging/ubuntu2204/fexpe/* fex
+        cp fex/LICENSE fex/DEBIAN/copyright
+        sed -i "s/HOVERSION/${HOVERSION}/g" fex/Dockerfile
+        sed -i "s/HOVERSION/${HOVERSION}/g" fex/DEBIAN/control
+        sed -i "s/starting FEX based/starting FEX (Hangover ${HOVERSION}) based/g" fex/Source/Windows/ARM64EC/Module.cpp
+        sed -i "s/starting FEX based/starting FEX (Hangover ${HOVERSION}) based/g" fex/Source/Windows/WOW64/Module.cpp
+        nproc
+
+    - name: Build package
+      run: cd fex; docker build -t fexpe .
+
+    - name: Extract package
+      run: docker run --rm fexpe cat /opt/deb/hangover-libwow64fex_${{ env.HOVERSION }}_arm64.deb > hangover-libwow64fex_${{ env.HOVERSION }}_arm64.deb
+
+    - name: Extract dll
+      run: docker run --rm fexpe cat /opt/fex/build/Bin/libwow64fex.dll > libwow64fex.dll
+
+    - name: Upload deb as Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: hangover-libwow64fex_${{ env.HOVERSION }}_arm64.deb
+        path: hangover-libwow64fex_${{ env.HOVERSION }}_arm64.deb
+
+    - name: Upload dll as Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: libwow64fex.dll
+        path: libwow64fex.dll
+
+
+  fex-pe-ec:
+    needs: foundations
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v1
+    - name: free disk space
+      run: |
+        sudo swapoff -a
+        sudo rm -f /swapfile
+        sudo apt clean
+        df -h
+
+    - name: Cache docker image
+      id: cache-foundation
+      uses: actions/cache@v4
+      env:
+        cache-name: cache-foundation
+      with:
+        path: foundationubuntu2204.tgz
+        key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('.packaging/ubuntu2204/Dockerfile') }}
+
+    - name: Import docker image
+      run: docker image load -i foundationubuntu2204.tgz
+
+    - name: get version
+      run: git describe --tags | sed "s/hangover-/HOVERSION=/" >> "$GITHUB_ENV"; git describe --tags | sed "s/hangover-/HOVERSION=/"
+
+    - name: get shallow submodule
+      run: git submodule update --init --recursive --depth 1 fex
+
+    - name: Setup packaging
+      run: |
+        cp -r .packaging/ubuntu2204/fexpeec/* fex
+        cp fex/LICENSE fex/DEBIAN/copyright
+        sed -i "s/HOVERSION/${HOVERSION}/g" fex/Dockerfile
+        sed -i "s/HOVERSION/${HOVERSION}/g" fex/DEBIAN/control
+        sed -i "s/starting FEX based/starting FEX (Hangover ${HOVERSION}) based/g" fex/Source/Windows/ARM64EC/Module.cpp
+        sed -i "s/starting FEX based/starting FEX (Hangover ${HOVERSION}) based/g" fex/Source/Windows/WOW64/Module.cpp
+        nproc
+
+    - name: Build package
+      run: cd fex; docker build -t fexpeec .
+
+    - name: Extract package
+      run: docker run --rm fexpeec cat /opt/deb/hangover-libarm64ecfex_${{ env.HOVERSION }}_arm64.deb > hangover-libarm64ecfex_${{ env.HOVERSION }}_arm64.deb
+
+    - name: Extract dll
+      run: docker run --rm fexpeec cat /opt/fex/build/Bin/libarm64ecfex.dll > libarm64ecfex.dll
+
+    - name: Upload deb as Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: hangover-libarm64ecfex_${{ env.HOVERSION }}_arm64.deb
+        path: hangover-libarm64ecfex_${{ env.HOVERSION }}_arm64.deb
+
+    - name: Upload dll as Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: libarm64ecfex.dll
+        path: libarm64ecfex.dll
+
+  box-pe:
+    needs: foundations
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v1
+    - name: free disk space
+      run: |
+        sudo swapoff -a
+        sudo rm -f /swapfile
+        sudo apt clean
+        df -h
+
+    - name: Cache docker image
+      id: cache-foundation
+      uses: actions/cache@v4
+      env:
+        cache-name: cache-foundation
+      with:
+        path: foundationubuntu2204.tgz
+        key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('.packaging/ubuntu2204/Dockerfile') }}
+
+    - name: Import docker image
+      run: docker image load -i foundationubuntu2204.tgz
+
+    - name: get version
+      run: git describe --tags | sed "s/hangover-/HOVERSION=/" >> "$GITHUB_ENV"; git describe --tags | sed "s/hangover-/HOVERSION=/"
+
+    - name: get shallow submodule
+      run: git submodule update --init --recursive --depth 1 box64
+
+    - name: Setup packaging
+      run: |
+        rm -rf box64/debian
+        cp -r .packaging/ubuntu2204/boxpe/* box64
+        cp box64/LICENSE box64/DEBIAN/copyright
+        sed -i "s/HOVERSION/${HOVERSION}/g" box64/Dockerfile
+        sed -i "s/HOVERSION/${HOVERSION}/g" box64/DEBIAN/control
+        sed -i "s/GITREV/\"(Hangover ${HOVERSION})\"/g" box64/src/build_info.h
+        nproc
+
+    - name: Build package
+      run: cd box64; docker build -t boxpe .
+
+    - name: Extract package
+      run: docker run --rm boxpe cat /opt/deb/hangover-wowbox64_${{ env.HOVERSION }}_arm64.deb > hangover-wowbox64_${{ env.HOVERSION }}_arm64.deb
+
+    - name: Extract dll
+      run: docker run --rm boxpe cat /opt/box64/build/wowbox64-prefix/src/wowbox64-build/wowbox64.dll > wowbox64.dll
+
+    - name: Upload deb as Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: hangover-wowbox64_${{ env.HOVERSION }}_arm64.deb
+        path: hangover-wowbox64_${{ env.HOVERSION }}_arm64.deb
+
+    - name: Upload dll as Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: wowbox64.dll
+        path: wowbox64.dll
+
+  dxvk:
+    needs: foundations
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v1
+    - name: Checkout DXVK
+      uses: actions/checkout@v4
+      with:
+        repository: AndreRH/dxvk
+        fetch-tags: true
+        submodules: true
+        fetch-depth: 16
+        path: dxvk
+
+    - name: Cache docker image
+      id: cache-foundation
+      uses: actions/cache@v4
+      env:
+        cache-name: cache-foundation
+      with:
+        path: foundationubuntu2204.tgz
+        key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('.packaging/ubuntu2204/Dockerfile') }}
+
+    - name: Import docker image
+      run: docker image load -i foundationubuntu2204.tgz
+
+    - name: get version
+      run: echo DXVKVERSION=$(git -C dxvk describe --abbrev=0) >> "$GITHUB_ENV"; echo DXVKVERSION=$(git -C dxvk describe --abbrev=0)
+
+    - name: Setup packaging
+      run: |
+        cp -r .packaging/ubuntu2204/dxvk/* dxvk
+
+    - name: Build package
+      run: cd dxvk; docker build -t dxvk .
+
+    - name: Extract package
+      run: docker run --rm dxvk cat /opt/dxvk/output/dxvk-${{ env.DXVKVERSION }}.tar.gz > dxvk-${{ env.DXVKVERSION }}.tar.gz
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: dxvk-${{ env.DXVKVERSION }}.tar.gz
+        path: dxvk-${{ env.DXVKVERSION }}.tar.gz
+
+
+  proton:
+    needs: foundations
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [debian11, debian12, debian13, ubuntu2004, ubuntu2204, ubuntu2404, ubuntu2504]
+        include:
+          - os: debian11
+            codename: bullseye
+          - os: debian12
+            codename: bookworm
+          - os: debian13
+            codename: trixie
+          - os: ubuntu2004
+            codename: focal
+          - os: ubuntu2204
+            codename: jammy
+          - os: ubuntu2404
+            codename: noble
+          - os: ubuntu2504
+            codename: plucky
+
+    steps:
+    - uses: actions/checkout@v1
+    - name: free disk space
+      run: |
+        sudo swapoff -a
+        sudo rm -f /swapfile
+        sudo apt clean
+        df -h
+
+    - name: Cache docker image
+      id: cache-foundation
+      uses: actions/cache@v4
+      env:
+        cache-name: cache-foundation
+      with:
+        path: foundation${{ matrix.os }}.tgz
+        key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles(format('.packaging/{0}/Dockerfile', matrix.os)) }}
+
+    - name: Import docker image
+      run: docker image load -i foundation${{ matrix.os }}.tgz
+
+    - name: get version
+      run: git describe --tags | sed "s/hangover-/HOVERSION=/" >> "$GITHUB_ENV"; git describe --tags | sed "s/hangover-/HOVERSION=/"
+
+    - name: Checkout Proton Wine
+      uses: actions/checkout@v4
+      with:
+        repository: ValveSoftware/wine
+        ref: proton-10.0
+        fetch-tags: true
+        submodules: true
+        fetch-depth: 1
+        path: proton-wine
+
+    - name: Setup packaging
+      run: |
+        cp -r .packaging/${{ matrix.os }}/proton/* proton-wine
+        sed -i "s/HOVERSION/${HOVERSION}/g" proton-wine/Dockerfile
+        nproc
+
+    - name: Adjust changelog for intermediate
+      if: github.event_name != 'release'
+      run: |
+        cp proton-wine/debian/changelog proton-wine/debian/changelog.old
+        echo "hangover-proton (${HOVERSION}~${{ matrix.codename }}) UNRELEASED; urgency=low" > proton-wine/debian/changelog.entry
+        echo "" >> proton-wine/debian/changelog.entry
+        echo "  * Intermediate build ${HOVERSION}~${{ matrix.codename }}" >> proton-wine/debian/changelog.entry
+        echo "" >> proton-wine/debian/changelog.entry
+        echo -n " -- André Zwing <nerv@dawncrow.de>  " >> proton-wine/debian/changelog.entry
+        LC_TIME=en_US.UTF-8 date "+%a, %d %b %Y %H:%M:%S %z" >> proton-wine/debian/changelog.entry
+        echo "" >> proton-wine/debian/changelog.entry
+        cat proton-wine/debian/changelog.entry proton-wine/debian/changelog.old > proton-wine/debian/changelog
+        rm proton-wine/debian/changelog.entry proton-wine/debian/changelog.old
+        cat proton-wine/debian/changelog
+
+    - name: Adjust changelog for release
+      if: github.event_name == 'release'
+      run: |
+        cp proton-wine/debian/changelog proton-wine/debian/changelog.old
+        echo "hangover-proton (${HOVERSION}~${{ matrix.codename }}) UNRELEASED; urgency=low" > proton-wine/debian/changelog.entry
+        echo "" >> proton-wine/debian/changelog.entry
+        echo "  * Release ${HOVERSION}~${{ matrix.codename }}" >> proton-wine/debian/changelog.entry
+        echo "" >> proton-wine/debian/changelog.entry
+        echo -n " -- André Zwing <nerv@dawncrow.de>  " >> proton-wine/debian/changelog.entry
+        LC_TIME=en_US.UTF-8 date "+%a, %d %b %Y %H:%M:%S %z" >> proton-wine/debian/changelog.entry
+        echo "" >> proton-wine/debian/changelog.entry
+        cat proton-wine/debian/changelog.entry proton-wine/debian/changelog.old > proton-wine/debian/changelog
+        rm proton-wine/debian/changelog.entry proton-wine/debian/changelog.old
+        cat proton-wine/debian/changelog
+
+    - name: Build package
+      run: cd proton-wine; docker build -t proton${{ matrix.os }} .
+
+    - name: Extract package
+      run: docker run --rm proton${{ matrix.os }} cat /opt/hangover-proton_${{ env.HOVERSION }}~${{ matrix.codename }}_arm64.deb > hangover-proton_${{ env.HOVERSION }}~${{ matrix.codename }}_arm64.deb
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: hangover-proton_${{ env.HOVERSION }}~${{ matrix.codename }}_arm64.deb
+        path: hangover-proton_${{ env.HOVERSION }}~${{ matrix.codename }}_arm64.deb
+
+
+  bundle:
+    needs: [dxvk, fex-pe, fex-pe-ec, box-pe, proton]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [debian11, debian12, debian13, ubuntu2004, ubuntu2204, ubuntu2404, ubuntu2504]
+        include:
+          - os: debian11
+            codename: bullseye
+          - os: debian12
+            codename: bookworm
+          - os: debian13
+            codename: trixie
+          - os: ubuntu2004
+            codename: focal
+          - os: ubuntu2204
+            codename: jammy
+          - os: ubuntu2404
+            codename: noble
+          - os: ubuntu2504
+            codename: plucky
+
+    steps:
+    - uses: actions/checkout@v1
+    - name: free disk space
+      run: |
+        sudo swapoff -a
+        sudo rm -f /swapfile
+        sudo apt clean
+        df -h
+
+    - name: get version
+      run: git describe --tags | sed "s/hangover-/HOVERSION=/" >> "$GITHUB_ENV"; git describe --tags | sed "s/hangover-/HOVERSION=/"
+
+    - name: Download Artifacts 1/5
+      uses: actions/download-artifact@v4
+      with:
+        pattern: hangover*${{ matrix.codename }}_arm64.deb
+        merge-multiple: true
+
+    - name: Download Artifacts 2/5
+      uses: actions/download-artifact@v4
+      with:
+        pattern: hangover-libwow64fex*_arm64.deb
+        merge-multiple: true
+
+    - name: Download Artifacts 3/5
+      uses: actions/download-artifact@v4
+      with:
+        pattern: hangover-libarm64ecfex*_arm64.deb
+        merge-multiple: true
+
+    - name: Download Artifacts 4/5
+      uses: actions/download-artifact@v4
+      with:
+        pattern: dxvk*.tar.gz
+        merge-multiple: true
+
+    - name: Download Artifacts 5/5
+      uses: actions/download-artifact@v4
+      with:
+        pattern: hangover-wowbox64*_arm64.deb
+        merge-multiple: true
+
+    - name: Bundle
+      run: tar -cf hangover_${{ env.HOVERSION }}_${{ matrix.os }}_${{ matrix.codename }}_arm64.tar hangover*${{ matrix.codename }}_arm64.deb hangover-libwow64fex*_arm64.deb hangover-libarm64ecfex*_arm64.deb dxvk*.tar.gz hangover-wowbox64*_arm64.deb
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: hangover_${{ env.HOVERSION }}_${{ matrix.os }}_${{ matrix.codename }}_arm64.tar
+        path: hangover_${{ env.HOVERSION }}_${{ matrix.os }}_${{ matrix.codename }}_arm64.tar
+        retention-days: 14
+
+    - name: Upload Artifact as Release Asset
+      if: github.event_name == 'release'
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: hangover_${{ env.HOVERSION }}_${{ matrix.os }}_${{ matrix.codename }}_arm64.tar
+        asset_name: hangover_${{ env.HOVERSION }}_${{ matrix.os }}_${{ matrix.codename }}_arm64.tar
+        asset_content_type: application/x-tar
+
+  dllbundle:
+    needs: [dxvk, fex-pe, fex-pe-ec, box-pe]
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v1
+    - name: free disk space
+      run: |
+        sudo swapoff -a
+        sudo rm -f /swapfile
+        sudo apt clean
+        df -h
+
+    - name: get version
+      run: git describe --tags | sed "s/hangover-/HOVERSION=/" >> "$GITHUB_ENV"; git describe --tags | sed "s/hangover-/HOVERSION=/"
+
+    - name: Download Artifacts 1/3
+      uses: actions/download-artifact@v4
+      with:
+        pattern: lib*.dll
+        merge-multiple: true
+
+    - name: Download Artifacts 2/3
+      uses: actions/download-artifact@v4
+      with:
+        pattern: wow*.dll
+        merge-multiple: true
+
+    - name: Download Artifacts 3/3
+      uses: actions/download-artifact@v4
+      with:
+        pattern: dxvk*.tar.gz
+        merge-multiple: true
+
+    - name: Bundle
+      run: tar -cf hangover_${{ env.HOVERSION }}_dlls.tar dxvk*.tar.gz lib*.dll wow*.dll
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: hangover_${{ env.HOVERSION }}_dlls.tar
+        path: hangover_${{ env.HOVERSION }}_dlls.tar
+        retention-days: 14
+
+    - name: Upload Artifact as Release Asset
+      if: github.event_name == 'release'
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: hangover_${{ env.HOVERSION }}_dlls.tar
+        asset_name: hangover_${{ env.HOVERSION }}_dlls.tar
+        asset_content_type: application/x-tar
