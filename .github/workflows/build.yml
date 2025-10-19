@@ -337,7 +337,7 @@ jobs:
       uses: actions/checkout@v4
       with:
         repository: ValveSoftware/wine
-        ref: proton-10.0
+        ref: proton_10.0
         fetch-tags: true
         submodules: true
         fetch-depth: 1
