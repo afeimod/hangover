@@ -186,7 +186,7 @@ jobs:
               libgstreamer-plugins-base1.0-dev \
               gstreamer1.0-* \
               libmpg123-dev \
-              libopenal-dev
+              libopenal-dev \
             && rm -rf /var/lib/apt/lists/*
         
         
