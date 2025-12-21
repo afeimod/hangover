@@ -27,6 +27,8 @@ env:
   ARCH: arm64
   BUILD_DIR: /tmp/proton-build
   INSTALL_DIR: /tmp/proton-install
+  LLVMMINGW_DATE: 20251202
+  LLVMMINGW_NAME: llvm-mingw-20251202-ucrt-ubuntu-22.04-x86_64
 
 jobs:
   build-proton:
@@ -62,7 +64,9 @@ jobs:
           lsb-release \
           pkg-config \
           cmake \
-          ninja-build
+          ninja-build \
+          qemu-user-static \
+          binfmt-support
         
         docker --version
         
@@ -81,132 +85,154 @@ jobs:
       run: |
         mkdir -p .docker/debian12
         
-        cat > .docker/debian12/Dockerfile << 'EOF'
-        FROM arm64v8/debian:bookworm-slim
-        
-        # 设置环境变量
+        cat > .docker/debian12/Dockerfile << EOF
+        FROM debian:12
+
+        ARG LLVMMINGW_DATE=20251202
+        ARG LLVMMINGW_NAME=llvm-mingw-\${LLVMMINGW_DATE}-ucrt-ubuntu-22.04-x86_64
+
         ENV DEBIAN_FRONTEND=noninteractive
         ENV LANG=C.UTF-8
         ENV LC_ALL=C.UTF-8
-        ENV BUILD_JOBS=$(nproc)
+        ENV BUILD_JOBS=\$(nproc)
         
-        # 设置时区
-        RUN ln -fs /usr/share/zoneinfo/UTC /etc/localtime
+        # 设置多架构支持
+        RUN echo "deb [arch=amd64,arm64] http://deb.debian.org/debian bookworm main contrib non-free" > /etc/apt/sources.list && \
+            echo "deb [arch=amd64,arm64] http://deb.debian.org/debian bookworm-updates main contrib non-free" >> /etc/apt/sources.list && \
+            echo "deb [arch=amd64,arm64] http://security.debian.org/debian-security bookworm-security main contrib non-free" >> /etc/apt/sources.list
         
-        # 更新和安装基础包
-        RUN apt-get update && apt-get upgrade -y && \
-            apt-get install -y \
-            build-essential \
+        RUN dpkg --add-architecture arm64 && \
+            apt-get update && apt-get install -y --no-install-recommends \
+            ca-certificates \
+            wget \
+            curl \
+            git \
+            make \
+            automake \
+            autoconf \
+            pkg-config \
+            libtool \
             cmake \
             ninja-build \
-            meson \
-            pkg-config \
-            autoconf \
-            automake \
-            libtool \
-            gettext \
+            gcc \
+            g++ \
+            clang \
+            llvm \
+            lld \
             flex \
             bison \
             nasm \
             yasm \
-            git \
-            wget \
-            curl \
-            ca-certificates \
-            gnupg \
-            software-properties-common \
-            sudo \
+            gettext \
             python3 \
-            python3-pip \
             python3-setuptools \
+            perl \
             ruby \
             patchelf \
-            && rm -rf /var/lib/apt/lists/*
+            meson
         
-        # 添加 non-free 和 contrib 仓库（有些包需要）
-        RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free" > /etc/apt/sources.list && \
-            echo "deb http://deb.debian.org/debian bookworm-updates main contrib non-free" >> /etc/apt/sources.list && \
-            echo "deb http://security.debian.org/debian-security bookworm-security main contrib non-free" >> /etc/apt/sources.list
+        # 安装ARM64原生构建工具
+        RUN apt-get install -y --no-install-recommends \
+            binutils-aarch64-linux-gnu \
+            gcc-aarch64-linux-gnu \
+            g++-aarch64-linux-gnu \
+            libc-dev-arm64-cross \
+            libstdc++6-arm64-cross \
+            libstdc++-12-dev-arm64-cross \
+            build-essential \
+            dpkg-dev \
+            fakeroot \
+            debhelper \
+            dh-make
         
-        # 安装 Wine/Proton 构建依赖（分步安装，避免错误）
-        RUN apt-get update && apt-get install -y \
-            debootstrap \
-            perl \
-            git \
-            wget \
-            xz-utils \
-            bubblewrap \
-            autoconf \
-            flex \
-            bison \
-            libx11-dev \
-            libxext-dev \
-            libxi-dev \
-            libxrandr-dev \
-            libxcursor-dev \
-            libxcomposite-dev \
-            libxdamage-dev \
-            libxfixes-dev \
-            libxxf86vm-dev \
-            libxrender-dev \
-            libxinerama-dev \
-            libgl-dev \
-            libsdl2-dev \
-            libglu-dev \
-            libosmesa6-dev \
-            libfreetype6-dev \
-            libfontconfig1-dev \
-            libpcap-dev \
-            libdbus-1-dev \
-            libssl-dev \
-            libasound2-dev \
-            libpulse-dev \
-            libudev-dev \
-            libcups2-dev \
-            libjpeg-dev \
-            libpng-dev \
-            libtiff-dev \
-            libxml2-dev \
-            mesa-vulkan-drivers \
-            mingw-w64 \
-            gettext \
-            libgettextpo-dev \
-            locales \
-            && rm -rf /var/lib/apt/lists/*
+        # 安装Wine/Proton构建所需的ARM64库
+        RUN apt-get install -y --no-install-recommends \
+            libfreetype6-dev:arm64 \
+            libglib2.0-dev:arm64 \
+            libltdl-dev:arm64 \
+            libxcb1-dev:arm64 \
+            libx11-dev:arm64 \
+            libxinerama-dev:arm64 \
+            libxcursor-dev:arm64 \
+            libxi-dev:arm64 \
+            libxrandr-dev:arm64 \
+            libxrender-dev:arm64 \
+            libxfixes-dev:arm64 \
+            libxcomposite-dev:arm64 \
+            libxdamage-dev:arm64 \
+            libxxf86vm-dev:arm64 \
+            libxshmfence-dev:arm64 \
+            libdbus-1-dev:arm64 \
+            libsane-dev:arm64 \
+            libusb-1.0-0-dev:arm64 \
+            libv4l-dev:arm64 \
+            libpulse-dev:arm64 \
+            libgstreamer1.0-dev:arm64 \
+            libgstreamer-plugins-base1.0-dev:arm64 \
+            libgstreamer-plugins-bad1.0-dev:arm64 \
+            libudev-dev:arm64 \
+            libunwind-dev:arm64 \
+            libsdl2-dev:arm64 \
+            libfontconfig1-dev:arm64 \
+            libkrb5-dev:arm64 \
+            libvulkan-dev:arm64 \
+            libgl-dev:arm64 \
+            libgnutls28-dev:arm64 \
+            libcups2-dev:arm64 \
+            libxkbcommon-dev:arm64 \
+            libxkbregistry-dev:arm64 \
+            libwayland-dev:arm64 \
+            libepoxy-dev:arm64 \
+            libssl-dev:arm64 \
+            libmpg123-dev:arm64 \
+            libopenal-dev:arm64 \
+            libpcap-dev:arm64 \
+            libosmesa6-dev:arm64 \
+            libjpeg-dev:arm64 \
+            libpng-dev:arm64 \
+            libtiff-dev:arm64 \
+            libxml2-dev:arm64 \
+            mesa-vulkan-drivers:arm64 \
+            libgettextpo-dev:arm64
         
-        RUN apt-get update && apt-get install -y \
-              libunwind-dev \
-              libgstreamer1.0-dev \
-              libgstreamer-plugins-base1.0-dev \
-              gstreamer1.0-* \
-              libmpg123-dev \
-              libopenal-dev \
-            && rm -rf /var/lib/apt/lists/*
-        
-        
-        
-        # 安装交叉编译工具（单独安装，避免冲突）
-        RUN apt-get update && apt-get install -y \
-            crossbuild-essential-arm64 \
-            && rm -rf /var/lib/apt/lists/*
-        
-        # mingw-w64 可能需要单独的源或不同的安装方式
-        RUN apt-get update && apt-get install -y \
+        # 安装mingw-w64工具链
+        RUN apt-get install -y --no-install-recommends \
             mingw-w64 \
             mingw-w64-tools \
             mingw-w64-common \
-            && rm -rf /var/lib/apt/lists/*
+            mingw-w64-i686-dev \
+            mingw-w64-x86-64-dev \
+            gcc-mingw-w64 \
+            g++-mingw-w64
         
-        # 安装 Debian 打包工具
-        RUN apt-get update && apt-get install -y \
-            debhelper \
-            devscripts \
-            equivs \
-            dh-make \
-            dpkg-dev \
-            fakeroot \
-            lintian \
-            && rm -rf /var/lib/apt/lists/*
+        # 下载和安装llvm-mingw（ARM64 Windows交叉编译工具链）
+        RUN mkdir -p /opt/llvm-mingw && cd /opt && \
+            wget -q https://github.com/mstorsjo/llvm-mingw/releases/download/\${LLVMMINGW_DATE}/\${LLVMMINGW_NAME}.tar.xz && \
+            tar -xJf \${LLVMMINGW_NAME}.tar.xz && \
+            mv \${LLVMMINGW_NAME} llvm-mingw && \
+            rm \${LLVMMINGW_NAME}.tar.xz
+        
+        # 设置环境变量
+        ENV PATH="/opt/llvm-mingw/bin:\$PATH"
+        ENV CC="gcc"
+        ENV CXX="g++"
+        ENV AR="ar"
+        ENV STRIP="strip"
+        
+        # 设置交叉编译环境变量
+        ENV CROSSCC="clang"
+        ENV CROSSCXX="clang++"
+        ENV CROSSAR="llvm-ar"
+        ENV CROSSLD="lld"
+        ENV CROSSRC="llvm-rc"
+        ENV CROSSSTRIP="llvm-strip"
+        
+        # ARM64 Windows交叉编译工具
+        ENV CC_aarch64_w64_mingw32="clang"
+        ENV CXX_aarch64_w64_mingw32="clang++"
+        ENV AR_aarch64_w64_mingw32="llvm-ar"
+        ENV STRIP_aarch64_w64_mingw32="llvm-strip"
+        ENV RC_aarch64_w64_mingw32="llvm-rc"
         
         # 创建构建用户
         RUN useradd -m -s /bin/bash builder && \
@@ -214,11 +240,6 @@ jobs:
         
         USER builder
         WORKDIR /home/builder
-        
-        # 设置环境变量
-        ENV CC="gcc"
-        ENV CXX="g++"
-        ENV PATH="/usr/local/bin:$PATH"
         
         CMD ["/bin/bash"]
         EOF
@@ -239,7 +260,9 @@ jobs:
           echo "foundation_image=foundation-debian12-arm64" >> $GITHUB_OUTPUT
         else
           echo "Building foundation Docker image..."
-          docker build -t foundation-debian12-arm64 .docker/debian12
+          docker build \
+            --build-arg LLVMMINGW_DATE=20251202 \
+            -t foundation-debian12-arm64 .docker/debian12
           
           docker save foundation-debian12-arm64 | gzip > foundation-debian12-arm64.tar.gz
           echo "foundation_image=foundation-debian12-arm64" >> $GITHUB_OUTPUT
@@ -294,12 +317,29 @@ jobs:
         mkdir -p build
         cd build
         
-        # 设置 ARM64 特定的编译标志
+        # 设置编译标志
         export CFLAGS="-O2 -pipe -march=armv8-a -mtune=cortex-a76 -fno-stack-protector"
         export CXXFLAGS="-O2 -pipe -march=armv8-a -mtune=cortex-a76 -fno-stack-protector"
         export LDFLAGS="-Wl,-Bsymbolic-functions -Wl,-z,relro"
         
-        # 运行配置脚本（简化配置，避免依赖问题）
+        # 设置交叉编译环境变量
+        export CC="gcc"
+        export CXX="g++"
+        export CROSSCC="clang"
+        export CROSSCXX="clang++"
+        export CROSSAR="llvm-ar"
+        export CROSSLD="lld"
+        export CROSSRC="llvm-rc"
+        export CROSSSTRIP="llvm-strip"
+        
+        # 设置ARM64 Windows交叉编译工具
+        export CC_aarch64_w64_mingw32="clang"
+        export CXX_aarch64_w64_mingw32="clang++"
+        export AR_aarch64_w64_mingw32="llvm-ar"
+        export STRIP_aarch64_w64_mingw32="llvm-strip"
+        export RC_aarch64_w64_mingw32="llvm-rc"
+        
+        # 运行配置脚本
         echo "Configuring Proton Wine..."
         ../configure \
             --prefix=/usr \
@@ -312,7 +352,11 @@ jobs:
             --with-dbus \
             --with-sdl \
             --with-cups \
-            --without-wayland
+            --with-gstreamer \
+            --with-mingw \
+            --enable-archs="x86_64,aarch64" \
+            --host=aarch64-linux-gnu \
+            --build=aarch64-linux-gnu
         
         # 构建
         echo "Building Proton Wine..."
@@ -331,7 +375,7 @@ jobs:
         # 复制文件
         cp -r ${INSTALL_DIR}/usr/* ${DEB_DIR}/usr/
         
-        # 创建控制文件（简化依赖列表）
+        # 创建控制文件
         cat > ${DEB_DIR}/DEBIAN/control << CONTROL
         Package: hangover-proton
         Version: ${HOVERSION}~${CODENAME}
@@ -345,8 +389,11 @@ jobs:
                  libxfixes3, libxxf86vm1, libdbus-1-3 (>= 1.12), libudev1 (>= 247),
                  libv4l-0 (>= 1.22), libxkbcommon0 (>= 1.4), libxml2 (>= 2.9.13),
                  libxslt1.1 (>= 1.1.35), libgnutls30 (>= 3.7.7), libcups2 (>= 2.4),
-                 libfreetype6 (>= 2.12), libfontconfig1 (>= 2.14), libglu1-mesa | libglu1
-        Recommends: mesa-vulkan-drivers, libvulkan1
+                 libfreetype6 (>= 2.12), libfontconfig1 (>= 2.14), libglu1-mesa | libglu1,
+                 libgstreamer1.0-0 (>= 1.20), libgstreamer-plugins-base1.0-0 (>= 1.20),
+                 libgstreamer-plugins-bad1.0-0 (>= 1.20), libunwind8 (>= 1.5)
+        Recommends: mesa-vulkan-drivers, libvulkan1, gstreamer1.0-plugins-good,
+                    gstreamer1.0-plugins-bad, gstreamer1.0-plugins-ugly
         Conflicts: wine, wine64, wine-stable, wine-development, winehq-stable, winehq-devel
         Replaces: wine, wine64
         Provides: wine, wine64
@@ -420,54 +467,54 @@ jobs:
         
         echo "Starting Proton build in Docker container..."
         
-        # 创建更简单的构建脚本以调试
-        cat > /tmp/debug-build.sh << 'EOF'
+        # 创建测试构建脚本
+        cat > /tmp/test-environment.sh << 'EOF'
         #!/bin/bash
         set -e
         
-        echo "=== Debug: Checking environment ==="
-        uname -a
-        lsb_release -a
-        gcc --version
-        g++ --version
+        echo "=== Testing environment ==="
+        echo "1. Checking compilers:"
+        which gcc && gcc --version | head -1
+        which g++ && g++ --version | head -1
+        which clang && clang --version | head -1
+        which clang++ && clang++ --version | head -1
         
-        echo "=== Debug: Checking Proton source ==="
-        mkdir -p /tmp/test-build
-        cd /tmp/test-build
+        echo "2. Checking cross-compilers:"
+        which aarch64-w64-mingw32-clang && aarch64-w64-mingw32-clang --version | head -1
+        which llvm-ar && llvm-ar --version | head -1
+        which lld && lld --version | head -1
         
-        git clone https://github.com/ValveSoftware/wine 
-        cd wine
-        git checkout proton_10.0
-        # 生成 configure 脚本
-        echo "生成 configure 脚本..."
-        ./autogen.sh
-        echo "=== Debug: Running configure ==="
-        mkdir -p build
-        cd build
-        ../configure --help | head -20
+        echo "3. Checking libraries:"
+        echo "Freetype:"
+        pkg-config --modversion freetype2
+        echo "Fontconfig:"
+        pkg-config --modversion fontconfig
+        echo "SDL2:"
+        pkg-config --modversion sdl2
+        echo "Vulkan:"
+        pkg-config --modversion vulkan
         
-        echo "=== Debug: Minimal configure ==="
-        ../configure --prefix=/usr --enable-win64 --disable-win16 --with-x --with-gstreamer
+        echo "4. Testing simple compile:"
+        echo '#include <stdio.h>' > test.c
+        echo 'int main() { printf("Hello ARM64\\n"); return 0; }' >> test.c
+        gcc test.c -o test && ./test && rm test test.c
         
-        echo "=== Debug: Make ==="
-        make -j2 || echo "Make failed, but continuing for debugging"
-        
-        echo "=== Debug: Done ==="
+        echo "=== Environment test completed ==="
         EOF
         
-        chmod +x /tmp/debug-build.sh
+        chmod +x /tmp/test-environment.sh
         
-        # 先运行调试构建
-        echo "Running debug build to check environment..."
+        # 运行环境测试
+        echo "Testing build environment..."
         docker run --rm \
-          --name proton-debug \
+          --name proton-test-env \
           --volume /tmp:/tmp:rw \
           --workdir /tmp \
           ${{ steps.foundation.outputs.foundation_image }} \
-          /bin/bash -c "/tmp/debug-build.sh"
+          /bin/bash -c "/tmp/test-environment.sh"
         
-        # 如果调试成功，运行正式构建
-        echo "Running official build..."
+        # 运行正式构建
+        echo "Running Proton build..."
         docker run --rm \
           --name proton-builder \
           --volume /tmp:/tmp:rw \
@@ -477,6 +524,10 @@ jobs:
           ${{ steps.foundation.outputs.foundation_image }} \
           /bin/bash -c "
             echo '=== Starting Proton build ==='
+            
+            # 设置环境变量
+            export LLVMMINGW_DATE=20251202
+            export PATH=\"/opt/llvm-mingw/bin:\$PATH\"
             
             # 运行构建脚本
             /tmp/build-proton.sh \
@@ -515,9 +566,14 @@ jobs:
         
     - name: Test Proton package
       run: |
-        # 创建更简单的测试容器
+        # 创建测试容器
         cat > Dockerfile.test << 'EOF'
         FROM arm64v8/debian:bookworm-slim
+        
+        # 设置多架构
+        RUN echo "deb [arch=arm64] http://deb.debian.org/debian bookworm main contrib non-free" > /etc/apt/sources.list && \
+            echo "deb [arch=arm64] http://deb.debian.org/debian bookworm-updates main contrib non-free" >> /etc/apt/sources.list && \
+            echo "deb [arch=arm64] http://security.debian.org/debian-security bookworm-security main contrib non-free" >> /etc/apt/sources.list
         
         # 安装基本依赖
         RUN apt-get update && apt-get install -y \
@@ -547,6 +603,14 @@ jobs:
             libfreetype6 \
             libfontconfig1 \
             libglu1-mesa \
+            libgstreamer1.0-0 \
+            libgstreamer-plugins-base1.0-0 \
+            libgstreamer-plugins-bad1.0-0 \
+            libunwind8 \
+            mesa-vulkan-drivers \
+            gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad \
+            gstreamer1.0-plugins-ugly \
             && rm -rf /var/lib/apt/lists/*
         
         # 复制 Proton 包
@@ -562,7 +626,7 @@ jobs:
         docker run --rm proton-test /bin/bash -c "
           echo '=== Testing Proton package installation ==='
           
-          # 尝试安装包
+          # 安装包
           if dpkg -i /tmp/hangover-proton_*.deb 2>&1; then
             echo 'Package installed successfully'
           else
@@ -596,7 +660,7 @@ jobs:
           if command -v wine64 >/dev/null 2>&1; then
             echo '✓ wine64 command found'
             echo 'Running wine64 --version:'
-            timeout 5s wine64 --version 2>&1 | head -5 || echo 'wine --version failed or timed out'
+            timeout 10s wine64 --version 2>&1 | head -10 || echo 'wine --version failed or timed out'
           else
             echo '✗ wine64 command not found'
             exit 1
