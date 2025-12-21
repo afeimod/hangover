@@ -14,13 +14,13 @@ echo "Architecture: ${ARCH}"
 
 # 清理旧的构建
 rm -rf build/
-rm -rf proton-src/
+rm -rf wine
 
 # 克隆 Proton 源代码
 echo "Cloning Proton source..."
-git clone --depth=1 --branch "proton_${PROTON_VERSION}" \
-    https://github.com/ValveSoftware/Proton.git proton-src
-
+git clone https://github.com/ValveSoftware/wine
+cd wine
+git checkout proton_${PROTON_VERSION}
 # 创建构建目录
 mkdir -p build
 cd build
