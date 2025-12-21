@@ -139,8 +139,6 @@ jobs:
             autoconf \
             flex \
             bison \
-            gcc-multilib \
-            g++-multilib \
             libx11-dev \
             libxext-dev \
             libxi-dev \
@@ -169,9 +167,6 @@ jobs:
             libpng-dev \
             libtiff-dev \
             libxml2-dev \
-            libvulkan-dev \
-            vulkan-tools \
-            libvulkan1 \
             mesa-vulkan-drivers \
             mingw-w64 \
             gettext \
