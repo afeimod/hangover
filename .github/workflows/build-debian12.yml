@@ -130,74 +130,66 @@ jobs:
         
         # 安装 Wine/Proton 构建依赖（分步安装，避免错误）
         RUN apt-get update && apt-get install -y \
-            libfreetype-dev \
-            libfontconfig-dev \
+            debootstrap \
+            perl \
+            git \
+            wget \
+            xz-utils \
+            bubblewrap \
+            autoconf \
+            flex \
+            bison \
+            gcc-multilib \
+            g++-multilib \
             libx11-dev \
             libxext-dev \
-            libxrandr-dev \
-            libxinerama-dev \
-            libxcursor-dev \
             libxi-dev \
+            libxrandr-dev \
+            libxcursor-dev \
             libxcomposite-dev \
             libxdamage-dev \
             libxfixes-dev \
             libxxf86vm-dev \
-            libgl1-mesa-dev \
-            libglu1-mesa-dev \
-            libvulkan-dev \
-            libpulse-dev \
-            libasound2-dev \
-            && rm -rf /var/lib/apt/lists/*
-        
-        RUN apt-get update && apt-get install -y \
-            libgstreamer1.0-dev \
-            libgstreamer-plugins-base1.0-dev \
-            libgstreamer-plugins-good1.0-dev \
-            libgstreamer-plugins-bad1.0-dev \
-            libopenal-dev \
+            libxrender-dev \
+            libxinerama-dev \
+            libgl-dev \
             libsdl2-dev \
+            libglu-dev \
+            libosmesa6-dev \
+            libfreetype6-dev \
+            libfontconfig1-dev \
+            libpcap-dev \
             libdbus-1-dev \
+            libssl-dev \
+            libasound2-dev \
+            libpulse-dev \
             libudev-dev \
-            libusb-1.0-0-dev \
-            libv4l-dev \
-            libxkbcommon-dev \
-            libxml2-dev \
-            libxslt1-dev \
-            libgnutls28-dev \
-            libmpg123-dev \
             libcups2-dev \
-            libsane-dev \
+            libjpeg-dev \
+            libpng-dev \
+            libtiff-dev \
+            libxml2-dev \
+            libvulkan-dev \
+            vulkan-tools \
+            libvulkan1 \
+            mesa-vulkan-drivers \
+            mingw-w64 \
+            gettext \
+            libgettextpo-dev \
+            locales \
+            language-pack-zh-hans \
             && rm -rf /var/lib/apt/lists/*
         
         RUN apt-get update && apt-get install -y \
-            libgssapi-krb5-2 \
-            libavcodec-dev \
-            libavformat-dev \
-            libswscale-dev \
-            libavutil-dev \
-            libavfilter-dev \
-            libpostproc-dev \
-            libtheora-dev \
-            libvpx-dev \
-            libspeex-dev \
-            libopus-dev \
-            libwebp-dev \
-            libgsm1-dev \
-            liblcms2-dev \
-            libtiff-dev \
-            libgphoto2-dev \
-            libopenexr-dev \
-            libheif-dev \
-            libraw-dev \
-            libgmp-dev \
-            libmpfr-dev \
-            libmpc-dev \
-            libp11-kit-dev \
-            libsecret-1-dev \
-            libsoup2.4-dev \
-            libssl-dev \
-            libc6-dev \
+              libunwind-dev \
+              libgstreamer1.0-dev \
+              libgstreamer-plugins-base1.0-dev \
+              gstreamer1.0-* \
+              libmpg123-dev \
+              libopenal-dev
             && rm -rf /var/lib/apt/lists/*
+        
+        
         
         # 安装交叉编译工具（单独安装，避免冲突）
         RUN apt-get update && apt-get install -y \
