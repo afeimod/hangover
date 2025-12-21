@@ -1,6 +1,6 @@
 FROM debian:12
 
-ARG LLVMMINGW_DATE=20250613
+ARG LLVMMINGW_DATE=20251202
 ARG LLVMMINGW_NAME=llvm-mingw-$LLVMMINGW_DATE-ucrt-ubuntu-22.04-x86_64
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -14,7 +14,7 @@ RUN cat /etc/apt/sources.list
 RUN apt-get update && apt-get install -y --no-install-recommends \
     binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu \
     ca-certificates nano python3 python3-setuptools clang screen llvm lld wget curl \
-    flex bison \
+    flex bison nasm \
     libfreetype6-dev \
     libglib2.0-dev \
     libltdl-dev \
