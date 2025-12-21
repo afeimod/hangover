@@ -172,7 +172,6 @@ jobs:
             gettext \
             libgettextpo-dev \
             locales \
-            language-pack-zh-hans \
             && rm -rf /var/lib/apt/lists/*
         
         RUN apt-get update && apt-get install -y \
