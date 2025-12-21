@@ -30,7 +30,6 @@ env:
 
 jobs:
   build-proton:
-    # 使用 ARM64 运行器
     runs-on: ubuntu-24.04-arm
     
     steps:
@@ -44,14 +43,11 @@ jobs:
         sudo swapoff -a
         sudo rm -f /swapfile
         sudo apt clean
-        # 仅清理 docker 缓存，不删除容器
         docker system prune -f || true
         df -h
         
     - name: Set up build environment
       run: |
-        # GitHub Actions 已经预装了 Docker，不需要再安装
-        # 只安装构建 Debian 包所需的工具
         sudo apt-get update
         sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
           build-essential \
@@ -68,13 +64,11 @@ jobs:
           cmake \
           ninja-build
         
-        # 检查 Docker 是否可用
         docker --version
         
     - name: Get Hangover version
       id: get_version
       run: |
-        # 尝试从标签获取版本，如果没有则使用提交哈希
         if git describe --tags --exact-match 2>/dev/null; then
           VERSION=$(git describe --tags | sed 's/^hangover-//')
         else
@@ -129,7 +123,12 @@ jobs:
             patchelf \
             && rm -rf /var/lib/apt/lists/*
         
-        # 安装 Wine/Proton 构建依赖
+        # 添加 non-free 和 contrib 仓库（有些包需要）
+        RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free" > /etc/apt/sources.list && \
+            echo "deb http://deb.debian.org/debian bookworm-updates main contrib non-free" >> /etc/apt/sources.list && \
+            echo "deb http://security.debian.org/debian-security bookworm-security main contrib non-free" >> /etc/apt/sources.list
+        
+        # 安装 Wine/Proton 构建依赖（分步安装，避免错误）
         RUN apt-get update && apt-get install -y \
             libfreetype-dev \
             libfontconfig-dev \
@@ -148,6 +147,9 @@ jobs:
             libvulkan-dev \
             libpulse-dev \
             libasound2-dev \
+            && rm -rf /var/lib/apt/lists/*
+        
+        RUN apt-get update && apt-get install -y \
             libgstreamer1.0-dev \
             libgstreamer-plugins-base1.0-dev \
             libgstreamer-plugins-good1.0-dev \
@@ -165,6 +167,9 @@ jobs:
             libmpg123-dev \
             libcups2-dev \
             libsane-dev \
+            && rm -rf /var/lib/apt/lists/*
+        
+        RUN apt-get update && apt-get install -y \
             libgssapi-krb5-2 \
             libavcodec-dev \
             libavformat-dev \
@@ -192,8 +197,18 @@ jobs:
             libsoup2.4-dev \
             libssl-dev \
             libc6-dev \
+            && rm -rf /var/lib/apt/lists/*
+        
+        # 安装交叉编译工具（单独安装，避免冲突）
+        RUN apt-get update && apt-get install -y \
             crossbuild-essential-arm64 \
+            && rm -rf /var/lib/apt/lists/*
+        
+        # mingw-w64 可能需要单独的源或不同的安装方式
+        RUN apt-get update && apt-get install -y \
             mingw-w64 \
+            mingw-w64-tools \
+            mingw-w64-common \
             && rm -rf /var/lib/apt/lists/*
         
         # 安装 Debian 打包工具
@@ -227,13 +242,11 @@ jobs:
     - name: Build or load foundation Docker image
       id: foundation
       run: |
-        # 检查是否要强制重建
         if [ "${{ github.event.inputs.rebuild_foundation }}" = "true" ]; then
           echo "Forcing rebuild of foundation image..."
           rm -f foundation-debian12-arm64.tar.gz 2>/dev/null || true
         fi
         
-        # 检查缓存
         if [ -f "foundation-debian12-arm64.tar.gz" ]; then
           echo "Loading foundation image from cache..."
           docker load -i foundation-debian12-arm64.tar.gz
@@ -242,7 +255,6 @@ jobs:
           echo "Building foundation Docker image..."
           docker build -t foundation-debian12-arm64 .docker/debian12
           
-          # 保存镜像以便后续缓存
           docker save foundation-debian12-arm64 | gzip > foundation-debian12-arm64.tar.gz
           echo "foundation_image=foundation-debian12-arm64" >> $GITHUB_OUTPUT
         fi
@@ -285,39 +297,32 @@ jobs:
         git checkout ${PROTON_BRANCH}
         
         # 获取实际的 Proton 版本
-        PROTON_VERSION=$(git describe --tags --abbrev=0 | sed 's/^proton_//' 2>/dev/null || echo "${PROTON_BRANCH}")
+        PROTON_VERSION=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^proton_//' || echo "${PROTON_BRANCH}")
         echo "Proton version: ${PROTON_VERSION}"
         
         # 创建构建目录
         mkdir -p build
         cd build
         
-        # 配置构建参数
-        echo "Configuring Proton Wine..."
-        
         # 设置 ARM64 特定的编译标志
         export CFLAGS="-O2 -pipe -march=armv8-a -mtune=cortex-a76 -fno-stack-protector"
         export CXXFLAGS="-O2 -pipe -march=armv8-a -mtune=cortex-a76 -fno-stack-protector"
         export LDFLAGS="-Wl,-Bsymbolic-functions -Wl,-z,relro"
         
-        # 运行配置脚本
+        # 运行配置脚本（简化配置，避免依赖问题）
+        echo "Configuring Proton Wine..."
         ../configure \
             --prefix=/usr \
             --enable-win64 \
             --disable-win16 \
             --disable-tests \
             --with-x \
-            --with-gstreamer \
-            --with-openal \
             --with-vulkan \
             --with-pulse \
             --with-dbus \
             --with-sdl \
             --with-cups \
-            --with-sane \
-            --with-mingw \
-            --without-alsa \
-            --without-oss
+            --with-mingw
         
         # 构建
         echo "Building Proton Wine..."
@@ -336,7 +341,7 @@ jobs:
         # 复制文件
         cp -r ${INSTALL_DIR}/usr/* ${DEB_DIR}/usr/
         
-        # 创建控制文件
+        # 创建控制文件（简化依赖列表）
         cat > ${DEB_DIR}/DEBIAN/control << CONTROL
         Package: hangover-proton
         Version: ${HOVERSION}~${CODENAME}
@@ -345,26 +350,13 @@ jobs:
         Installed-Size: $(du -sk ${DEB_DIR}/usr | cut -f1)
         Depends: libc6 (>= 2.36), libgcc-s1 (>= 12), libstdc++6 (>= 12), 
                  libgl1, libvulkan1, libpulse0, libasound2 (>= 1.2.4),
-                 libsdl2-2.0-0 (>= 2.0.14), libgstreamer1.0-0 (>= 1.20),
-                 libgstreamer-plugins-base1.0-0 (>= 1.20), libgstreamer-plugins-good1.0-0 (>= 1.20),
-                 libgstreamer-plugins-bad1.0-0 (>= 1.20), libopenal1 (>= 1.22),
-                 libx11-6, libxext6, libxrandr2, libxinerama1, libxcursor1, libxi6,
-                 libxcomposite1, libxdamage1, libxfixes3, libxxf86vm1,
-                 libdbus-1-3 (>= 1.12), libudev1 (>= 247), libusb-1.0-0 (>= 1.0.25),
+                 libsdl2-2.0-0 (>= 2.0.14), libx11-6, libxext6, libxrandr2, 
+                 libxinerama1, libxcursor1, libxi6, libxcomposite1, libxdamage1, 
+                 libxfixes3, libxxf86vm1, libdbus-1-3 (>= 1.12), libudev1 (>= 247),
                  libv4l-0 (>= 1.22), libxkbcommon0 (>= 1.4), libxml2 (>= 2.9.13),
-                 libxslt1.1 (>= 1.1.35), libgnutls30 (>= 3.7.7), libldap-2.5-0 (>= 2.5.13),
-                 libmpg123-0 (>= 1.29), libcups2 (>= 2.4), libsane1 (>= 1.1),
-                 libgssapi-krb5-2 (>= 1.19), libavcodec59 (>= 7:5.1), libavformat59 (>= 7:5.1),
-                 libswscale6 (>= 7:5.1), libavutil57 (>= 7:5.1), libavfilter8 (>= 7:5.1),
-                 libpostproc56 (>= 7:5.1), libtheora0 (>= 1.2), libvpx7 (>= 1.12),
-                 libspeex1 (>= 1.2.1), libopus0 (>= 1.3.1), libwebp7 (>= 1.2.4),
-                 libgsm1 (>= 1.0.19), liblcms2-2 (>= 2.13), libtiff6 (>= 4.4),
-                 libgphoto2-6 (>= 2.5.28), libopenexr25 (>= 2.5.8), libheif1 (>= 1.13),
-                 libraw23 (>= 0.21), libgmp10 (>= 2:6.2.1), libmpfr6 (>= 4.1),
-                 libmpc3 (>= 1.2), libp11-kit0 (>= 0.24), libsecret-1-0 (>= 0.20),
-                 libsoup-3.0-0 (>= 3.0), libssl3 (>= 3.0), libfreetype6 (>= 2.12),
-                 libfontconfig1 (>= 2.14), libglu1-mesa | libglu1
-        Recommends: mesa-vulkan-drivers, libvulkan1, steam-installer
+                 libxslt1.1 (>= 1.1.35), libgnutls30 (>= 3.7.7), libcups2 (>= 2.4),
+                 libfreetype6 (>= 2.12), libfontconfig1 (>= 2.14), libglu1-mesa | libglu1
+        Recommends: mesa-vulkan-drivers, libvulkan1
         Conflicts: wine, wine64, wine-stable, wine-development, winehq-stable, winehq-devel
         Replaces: wine, wine64
         Provides: wine, wine64
@@ -402,7 +394,7 @@ jobs:
         update-alternatives --install /usr/bin/wine wine /usr/bin/wine64 50
         update-alternatives --install /usr/bin/wineserver wineserver /usr/bin/wineserver 50
         
-        # Create symlinks for Proton compatibility
+        # Create version file
         mkdir -p /usr/share/hangover-proton
         echo "Proton ${PROTON_VERSION} for Hangover ${HOVERSION}" > /usr/share/hangover-proton/version
         POSTINST
@@ -434,12 +426,56 @@ jobs:
         
     - name: Run Proton build in Docker container
       run: |
-        # 复制构建脚本到临时目录
         cp proton-build/build-proton.sh /tmp/
         
         echo "Starting Proton build in Docker container..."
         
-        # 运行 Docker 容器并执行构建
+        # 创建更简单的构建脚本以调试
+        cat > /tmp/debug-build.sh << 'EOF'
+        #!/bin/bash
+        set -e
+        
+        echo "=== Debug: Checking environment ==="
+        uname -a
+        lsb_release -a
+        gcc --version
+        g++ --version
+        
+        echo "=== Debug: Checking Proton source ==="
+        mkdir -p /tmp/test-build
+        cd /tmp/test-build
+        
+        git clone --depth 1 https://github.com/ValveSoftware/wine proton-wine
+        cd proton-wine
+        git checkout proton_10.0
+        
+        echo "=== Debug: Running configure ==="
+        mkdir -p build
+        cd build
+        ../configure --help | head -20
+        
+        echo "=== Debug: Minimal configure ==="
+        ../configure --prefix=/usr --enable-win64 --disable-win16 --with-x
+        
+        echo "=== Debug: Make ==="
+        make -j2 || echo "Make failed, but continuing for debugging"
+        
+        echo "=== Debug: Done ==="
+        EOF
+        
+        chmod +x /tmp/debug-build.sh
+        
+        # 先运行调试构建
+        echo "Running debug build to check environment..."
+        docker run --rm \
+          --name proton-debug \
+          --volume /tmp:/tmp:rw \
+          --workdir /tmp \
+          ${{ steps.foundation.outputs.foundation_image }} \
+          /bin/bash -c "/tmp/debug-build.sh"
+        
+        # 如果调试成功，运行正式构建
+        echo "Running official build..."
         docker run --rm \
           --name proton-builder \
           --volume /tmp:/tmp:rw \
@@ -451,7 +487,6 @@ jobs:
             echo '=== Starting Proton build ==='
             
             # 运行构建脚本
-            chmod +x /tmp/build-proton.sh
             /tmp/build-proton.sh \
               '${{ github.event.inputs.proton_branch || 'proton_10.0' }}' \
               '${{ env.HOVERSION }}' \
@@ -471,6 +506,8 @@ jobs:
               dpkg-deb -I /tmp/hangover-proton_${{ env.HOVERSION }}~${{ env.DISTRO_CODENAME }}_${{ env.ARCH }}.deb
             else
               echo 'Build failed! No package found.'
+              echo 'Listing /tmp:'
+              ls -la /tmp/
               exit 1
             fi
           "
@@ -486,7 +523,7 @@ jobs:
         
     - name: Test Proton package
       run: |
-        # 创建测试容器
+        # 创建更简单的测试容器
         cat > Dockerfile.test << 'EOF'
         FROM arm64v8/debian:bookworm-slim
         
@@ -497,9 +534,6 @@ jobs:
             libpulse0 \
             libasound2 \
             libsdl2-2.0-0 \
-            libgstreamer1.0-0 \
-            libgstreamer-plugins-base1.0-0 \
-            libopenal1 \
             libx11-6 \
             libxext6 \
             libxrandr2 \
@@ -517,9 +551,10 @@ jobs:
             libxml2 \
             libxslt1.1 \
             libgnutls30 \
-            libldap-2.5-0 \
-            libmpg123-0 \
             libcups2 \
+            libfreetype6 \
+            libfontconfig1 \
+            libglu1-mesa \
             && rm -rf /var/lib/apt/lists/*
         
         # 复制 Proton 包
@@ -535,7 +570,7 @@ jobs:
         docker run --rm proton-test /bin/bash -c "
           echo '=== Testing Proton package installation ==='
           
-          # 安装包
+          # 尝试安装包
           if dpkg -i /tmp/hangover-proton_*.deb 2>&1; then
             echo 'Package installed successfully'
           else
@@ -546,23 +581,32 @@ jobs:
           
           # 检查是否安装成功
           echo '=== Checking installation ==='
-          dpkg -l | grep hangover-proton
+          dpkg -l | grep hangover-proton || echo 'Package not in dpkg list'
           
           # 检查文件是否安装
           echo '=== Checking installed files ==='
-          ls -la /usr/bin/wine* 2>/dev/null || echo 'No wine binaries found'
-          ls -la /usr/bin/wineserver 2>/dev/null || echo 'No wineserver found'
+          if [ -f '/usr/bin/wine64' ]; then
+            echo '✓ wine64 found'
+            ls -la /usr/bin/wine64
+          else
+            echo '✗ wine64 not found'
+            ls -la /usr/bin/wine* 2>/dev/null || true
+          fi
+          
+          if [ -f '/usr/bin/wineserver' ]; then
+            echo '✓ wineserver found'
+          else
+            echo '✗ wineserver not found'
+          fi
           
           # 测试 wine --version
           echo '=== Testing wine binary ==='
           if command -v wine64 >/dev/null 2>&1; then
             echo '✓ wine64 command found'
             echo 'Running wine64 --version:'
-            wine64 --version 2>&1 | head -5 || echo 'wine --version failed'
+            timeout 5s wine64 --version 2>&1 | head -5 || echo 'wine --version failed or timed out'
           else
             echo '✗ wine64 command not found'
-            # 检查其他可能的 wine 命令
-            ls -la /usr/bin/wine* 2>/dev/null
             exit 1
           fi
           
@@ -602,7 +646,7 @@ jobs:
         echo "" >> $GITHUB_STEP_SUMMARY
         
         if [ -f "hangover-proton_${{ env.HOVERSION }}~${{ env.DISTRO_CODENAME }}_${{ env.ARCH }}.deb" ]; then
-          PACKAGE_SIZE=$(ls -lh hangover-proton_*.deb | awk '{print $5}')
+          PACKAGE_SIZE=$(ls -lh hangover-proton_*.deb 2>/dev/null | awk '{print $5}' || echo "unknown")
           echo "✅ **Build Status:** SUCCESS" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Package Information:**" >> $GITHUB_STEP_SUMMARY
@@ -612,7 +656,7 @@ jobs:
           echo "**Installation:**" >> $GITHUB_STEP_SUMMARY
           echo '```bash' >> $GITHUB_STEP_SUMMARY
           echo "sudo dpkg -i hangover-proton_${{ env.HOVERSION }}~${{ env.DISTRO_CODENAME }}_${{ env.ARCH }}.deb" >> $GITHUB_STEP_SUMMARY
-          echo "# 如果遇到依赖问题:" >> $GITHUB_STEP_SUMMARY
+          echo "# If there are dependency issues:" >> $GITHUB_STEP_SUMMARY
           echo "sudo apt-get install -f" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
         else
