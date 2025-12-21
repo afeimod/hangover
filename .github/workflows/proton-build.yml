@@ -66,15 +66,15 @@ jobs:
       - name: Checkout Proton
         uses: actions/checkout@v4
         with:
-          repository: ValveSoftware/Proton
+          repository: ValveSoftware/wine
           ref: proton_${{ env.PROTON_VERSION }}
-          path: proton-src
+          path: wine
           
       - name: Setup build environment
         run: |
           cd $GITHUB_WORKSPACE/hangover
           mkdir -p proton-build
-          cp -r proton-src/* proton-build/
+          cp -r wine/* proton-build/
           cp -r .packaging/${{ matrix.os }}/proton/* proton-build/
           
       - name: Build Proton
