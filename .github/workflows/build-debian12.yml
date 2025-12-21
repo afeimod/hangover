@@ -275,8 +275,8 @@ jobs:
         
         # 克隆 Proton Wine 源码
         echo "Cloning Proton Wine source..."
-        git clone --depth 1 https://github.com/ValveSoftware/wine proton-wine
-        cd proton-wine
+        git clone https://github.com/ValveSoftware/wine
+        cd wine
         
         # 切换到指定的 Proton 分支
         echo "Checking out branch: ${PROTON_BRANCH}"
@@ -312,7 +312,7 @@ jobs:
             --with-dbus \
             --with-sdl \
             --with-cups \
-            --with-mingw
+            --without-wayland
         
         # 构建
         echo "Building Proton Wine..."
@@ -435,17 +435,19 @@ jobs:
         mkdir -p /tmp/test-build
         cd /tmp/test-build
         
-        git clone --depth 1 https://github.com/ValveSoftware/wine proton-wine
-        cd proton-wine
+        git clone https://github.com/ValveSoftware/wine 
+        cd wine
         git checkout proton_10.0
-        
+        # 生成 configure 脚本
+        echo "生成 configure 脚本..."
+        ./autogen.sh
         echo "=== Debug: Running configure ==="
         mkdir -p build
         cd build
         ../configure --help | head -20
         
         echo "=== Debug: Minimal configure ==="
-        ../configure --prefix=/usr --enable-win64 --disable-win16 --with-x
+        ../configure --prefix=/usr --enable-win64 --disable-win16 --with-x --with-gstreamer
         
         echo "=== Debug: Make ==="
         make -j2 || echo "Make failed, but continuing for debugging"
