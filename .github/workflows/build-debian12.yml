@@ -235,13 +235,16 @@ jobs:
         ENV RC_aarch64_w64_mingw32="llvm-rc"
         
         # 创建构建用户
-        RUN useradd -m -s /bin/sh builder && \
-            echo "builder ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/builder
+        # 安装 sudo 并创建构建用户
+        RUN apt-get update && apt-get install -y sudo && \
+            useradd -m -s /bin/sh builder && \
+            echo "builder ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/builder && \
+            chmod 0440 /etc/sudoers.d/builder
         
         USER builder
         WORKDIR /home/builder
         
-        CMD ["/bin/bash"]
+        CMD ["/bin/sh"]
         EOF
         
         echo "Dockerfile created at .docker/debian12/Dockerfile"
