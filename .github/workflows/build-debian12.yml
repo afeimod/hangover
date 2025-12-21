@@ -286,6 +286,10 @@ jobs:
         PROTON_VERSION=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^proton_//' || echo "${PROTON_BRANCH}")
         echo "Proton version: ${PROTON_VERSION}"
         
+        # 生成 configure 脚本
+        echo "生成 configure 脚本..."
+        ./autogen.sh
+        
         # 创建构建目录
         mkdir -p build
         cd build
