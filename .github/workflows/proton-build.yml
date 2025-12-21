@@ -1,0 +1,90 @@
+name: Proton Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      proton_version:
+        description: 'Proton version to build'
+        required: true
+        default: '8.0'
+      build_distros:
+        description: 'Distributions to build for'
+        required: true
+        default: 'ubuntu2204,ubuntu2404'
+  push:
+    branches:
+      - 'proton/**'
+    tags:
+      - 'proton-*'
+  release:
+    types: [published]
+
+env:
+  PROTON_VERSION: ${{ github.event.inputs.proton_version || '8.0' }}
+  BUILD_DISTROS: ${{ github.event.inputs.build_distros || 'ubuntu2204,ubuntu2404' }}
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Set build matrix
+        id: set-matrix
+        run: |
+          DISTROS="${{ env.BUILD_DISTROS }}"
+          IFS=',' read -ra DISTRO_ARRAY <<< "$DISTROS"
+          MATRIX_JSON="{\"include\":["
+          for distro in "${DISTRO_ARRAY[@]}"; do
+            case $distro in
+              debian11) codename="bullseye" ;;
+              debian12) codename="bookworm" ;;
+              debian13) codename="trixie" ;;
+              ubuntu2004) codename="focal" ;;
+              ubuntu2204) codename="jammy" ;;
+              ubuntu2404) codename="noble" ;;
+              ubuntu2510) codename="questing" ;;
+              *) codename="unknown" ;;
+            esac
+            MATRIX_JSON+="{\"os\":\"$distro\",\"codename\":\"$codename\"},"
+          done
+          MATRIX_JSON="${MATRIX_JSON%,}]}"
+          echo "matrix=$MATRIX_JSON" >> $GITHUB_OUTPUT
+
+  build-proton:
+    needs: setup
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+    
+    steps:
+      - name: Checkout Hangover
+        uses: actions/checkout@v4
+        with:
+          path: hangover
+          
+      - name: Checkout Proton
+        uses: actions/checkout@v4
+        with:
+          repository: ValveSoftware/Proton
+          ref: proton_${{ env.PROTON_VERSION }}
+          path: proton-src
+          
+      - name: Setup build environment
+        run: |
+          cd $GITHUB_WORKSPACE/hangover
+          mkdir -p proton-build
+          cp -r proton-src/* proton-build/
+          cp -r .packaging/${{ matrix.os }}/proton/* proton-build/
+          
+      - name: Build Proton
+        run: |
+          cd $GITHUB_WORKSPACE/hangover/proton-build
+          ./build.sh ${{ github.sha }} ${{ env.PROTON_VERSION }} ${{ matrix.codename }}
+          
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: proton-${{ matrix.os }}-${{ env.PROTON_VERSION }}
+          path: $GITHUB_WORKSPACE/hangover/proton-build/install/
+          retention-days: 7
