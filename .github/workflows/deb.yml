@@ -304,15 +304,15 @@ EOF
         fi
         
         cat > debian/changelog << EOF
-hangover-proton (${HOVERSION}~${{ matrix.codename }}) ${{ matrix.codename }}; urgency=medium
+        hangover-proton (${HOVERSION}~${{ matrix.codename }}) ${{ matrix.codename }}; urgency=medium
 
-  * ${BUILD_TYPE} build of Proton ${PROTON_VERSION} for Hangover ${HOVERSION}
-  * Built for ${{ matrix.os }} (${{ matrix.codename }})
-  * ARM64 architecture
+          * ${BUILD_TYPE} build of Proton ${PROTON_VERSION} for Hangover ${HOVERSION}
+          * Built for ${{ matrix.os }} (${{ matrix.codename }})
+          * ARM64 architecture
 
- -- GitHub Actions Build <noreply@github.com>  $(date -R)
+         -- GitHub Actions Build <noreply@github.com>  $(date -R)
 
-EOF
+        EOF
         
         if [ -f debian/changelog.old ]; then
           cat debian/changelog.old >> debian/changelog
