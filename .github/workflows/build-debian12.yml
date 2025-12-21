@@ -30,7 +30,7 @@ env:
 
 jobs:
   build-proton:
-    # 使用 ARM64 运行器，因为需要构建 ARM64 架构的软件包
+    # 使用 ARM64 运行器
     runs-on: ubuntu-24.04-arm
     
     steps:
@@ -44,15 +44,16 @@ jobs:
         sudo swapoff -a
         sudo rm -f /swapfile
         sudo apt clean
-        docker system prune -a -f --volumes || true
+        # 仅清理 docker 缓存，不删除容器
+        docker system prune -f || true
         df -h
         
     - name: Set up build environment
       run: |
-        # 安装必要的工具
+        # GitHub Actions 已经预装了 Docker，不需要再安装
+        # 只安装构建 Debian 包所需的工具
         sudo apt-get update
-        sudo apt-get install -y \
-          docker.io \
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
           build-essential \
           debhelper \
           devscripts \
@@ -62,11 +63,13 @@ jobs:
           curl \
           ca-certificates \
           gnupg \
-          lsb-release
+          lsb-release \
+          pkg-config \
+          cmake \
+          ninja-build
         
-        # 将当前用户添加到 docker 组
-        sudo usermod -aG docker $USER
-        newgrp docker || true
+        # 检查 Docker 是否可用
+        docker --version
         
     - name: Get Hangover version
       id: get_version
@@ -191,8 +194,17 @@ jobs:
             libc6-dev \
             crossbuild-essential-arm64 \
             mingw-w64 \
-            wine64 \
-            wine32 \
+            && rm -rf /var/lib/apt/lists/*
+        
+        # 安装 Debian 打包工具
+        RUN apt-get update && apt-get install -y \
+            debhelper \
+            devscripts \
+            equivs \
+            dh-make \
+            dpkg-dev \
+            fakeroot \
+            lintian \
             && rm -rf /var/lib/apt/lists/*
         
         # 创建构建用户
@@ -215,8 +227,14 @@ jobs:
     - name: Build or load foundation Docker image
       id: foundation
       run: |
+        # 检查是否要强制重建
+        if [ "${{ github.event.inputs.rebuild_foundation }}" = "true" ]; then
+          echo "Forcing rebuild of foundation image..."
+          rm -f foundation-debian12-arm64.tar.gz 2>/dev/null || true
+        fi
+        
         # 检查缓存
-        if [ -f "foundation-debian12-arm64.tar.gz" ] && [ "${{ github.event.inputs.rebuild_foundation }}" != "true" ]; then
+        if [ -f "foundation-debian12-arm64.tar.gz" ]; then
           echo "Loading foundation image from cache..."
           docker load -i foundation-debian12-arm64.tar.gz
           echo "foundation_image=foundation-debian12-arm64" >> $GITHUB_OUTPUT
@@ -259,7 +277,7 @@ jobs:
         
         # 克隆 Proton Wine 源码
         echo "Cloning Proton Wine source..."
-        git clone https://github.com/ValveSoftware/wine proton-wine
+        git clone --depth 1 https://github.com/ValveSoftware/wine proton-wine
         cd proton-wine
         
         # 切换到指定的 Proton 分支
@@ -267,7 +285,7 @@ jobs:
         git checkout ${PROTON_BRANCH}
         
         # 获取实际的 Proton 版本
-        PROTON_VERSION=$(git describe --tags --abbrev=0 | sed 's/^proton_//')
+        PROTON_VERSION=$(git describe --tags --abbrev=0 | sed 's/^proton_//' 2>/dev/null || echo "${PROTON_BRANCH}")
         echo "Proton version: ${PROTON_VERSION}"
         
         # 创建构建目录
@@ -419,6 +437,8 @@ jobs:
         # 复制构建脚本到临时目录
         cp proton-build/build-proton.sh /tmp/
         
+        echo "Starting Proton build in Docker container..."
+        
         # 运行 Docker 容器并执行构建
         docker run --rm \
           --name proton-builder \
@@ -428,6 +448,8 @@ jobs:
           -e INSTALL_DIR=/tmp/proton-install \
           ${{ steps.foundation.outputs.foundation_image }} \
           /bin/bash -c "
+            echo '=== Starting Proton build ==='
+            
             # 运行构建脚本
             chmod +x /tmp/build-proton.sh
             /tmp/build-proton.sh \
@@ -436,21 +458,31 @@ jobs:
               '${{ env.DISTRO_CODENAME }}' \
               '${{ env.ARCH }}'
             
+            echo '=== Build completed ==='
+            
             # 检查是否构建成功
             if [ -f \"/tmp/hangover-proton_${{ env.HOVERSION }}~${{ env.DISTRO_CODENAME }}_${{ env.ARCH }}.deb\" ]; then
               echo 'Build successful!'
-              ls -lh /tmp/*.deb
+              echo 'Package details:'
+              ls -lh /tmp/hangover-proton_${{ env.HOVERSION }}~${{ env.DISTRO_CODENAME }}_${{ env.ARCH }}.deb
               
               # 显示包信息
+              echo 'Package info:'
               dpkg-deb -I /tmp/hangover-proton_${{ env.HOVERSION }}~${{ env.DISTRO_CODENAME }}_${{ env.ARCH }}.deb
             else
-              echo 'Build failed!'
+              echo 'Build failed! No package found.'
               exit 1
             fi
           "
         
         # 将构建的包复制到工作目录
-        cp /tmp/hangover-proton_${{ env.HOVERSION }}~${{ env.DISTRO_CODENAME }}_${{ env.ARCH }}.deb .
+        if [ -f "/tmp/hangover-proton_${{ env.HOVERSION }}~${{ env.DISTRO_CODENAME }}_${{ env.ARCH }}.deb" ]; then
+          cp /tmp/hangover-proton_${{ env.HOVERSION }}~${{ env.DISTRO_CODENAME }}_${{ env.ARCH }}.deb .
+          echo "Package copied to workspace"
+        else
+          echo "ERROR: Package not found in /tmp/"
+          exit 1
+        fi
         
     - name: Test Proton package
       run: |
@@ -504,23 +536,33 @@ jobs:
           echo '=== Testing Proton package installation ==='
           
           # 安装包
-          dpkg -i /tmp/hangover-proton_*.deb 2>&1 || apt-get install -f -y
+          if dpkg -i /tmp/hangover-proton_*.deb 2>&1; then
+            echo 'Package installed successfully'
+          else
+            echo 'Trying to fix dependencies...'
+            apt-get update
+            apt-get install -f -y
+          fi
           
           # 检查是否安装成功
+          echo '=== Checking installation ==='
           dpkg -l | grep hangover-proton
           
           # 检查文件是否安装
           echo '=== Checking installed files ==='
-          ls -la /usr/bin/wine* 2>/dev/null || true
-          ls -la /usr/bin/wineserver 2>/dev/null || true
+          ls -la /usr/bin/wine* 2>/dev/null || echo 'No wine binaries found'
+          ls -la /usr/bin/wineserver 2>/dev/null || echo 'No wineserver found'
           
           # 测试 wine --version
           echo '=== Testing wine binary ==='
           if command -v wine64 >/dev/null 2>&1; then
             echo '✓ wine64 command found'
+            echo 'Running wine64 --version:'
             wine64 --version 2>&1 | head -5 || echo 'wine --version failed'
           else
             echo '✗ wine64 command not found'
+            # 检查其他可能的 wine 命令
+            ls -la /usr/bin/wine* 2>/dev/null
             exit 1
           fi
           
@@ -560,15 +602,18 @@ jobs:
         echo "" >> $GITHUB_STEP_SUMMARY
         
         if [ -f "hangover-proton_${{ env.HOVERSION }}~${{ env.DISTRO_CODENAME }}_${{ env.ARCH }}.deb" ]; then
+          PACKAGE_SIZE=$(ls -lh hangover-proton_*.deb | awk '{print $5}')
           echo "✅ **Build Status:** SUCCESS" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Package Information:**" >> $GITHUB_STEP_SUMMARY
           echo "- **File:** hangover-proton_${{ env.HOVERSION }}~${{ env.DISTRO_CODENAME }}_${{ env.ARCH }}.deb" >> $GITHUB_STEP_SUMMARY
-          echo "- **Size:** $(ls -lh hangover-proton_*.deb | awk '{print $5}')" >> $GITHUB_STEP_SUMMARY
+          echo "- **Size:** $PACKAGE_SIZE" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Installation:**" >> $GITHUB_STEP_SUMMARY
           echo '```bash' >> $GITHUB_STEP_SUMMARY
           echo "sudo dpkg -i hangover-proton_${{ env.HOVERSION }}~${{ env.DISTRO_CODENAME }}_${{ env.ARCH }}.deb" >> $GITHUB_STEP_SUMMARY
+          echo "# 如果遇到依赖问题:" >> $GITHUB_STEP_SUMMARY
+          echo "sudo apt-get install -f" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
         else
           echo "❌ **Build Status:** FAILED" >> $GITHUB_STEP_SUMMARY
