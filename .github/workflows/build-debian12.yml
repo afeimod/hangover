@@ -411,7 +411,6 @@ jobs:
             --with-cups \
             --with-gstreamer \
             --enable-archs="aarch64" \
-            --host=aarch64-linux-gnu \
             --enable-nls \
             --disable-winemenubuilder \
             --without-ldap \
@@ -429,8 +428,7 @@ jobs:
             --without-unwind \
             --without-usb \
             --without-v4l2 \
-            --without-wayland \
-            --build=aarch64-linux-gnu
+            --without-wayland
         
         # 构建
         echo "Building Proton Wine..."
