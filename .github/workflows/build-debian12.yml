@@ -25,7 +25,11 @@ jobs:
 
     - name: Get Wine source code
       run: |
+        if [ -d "wine" ]; then
+          echo "Wine directory already exists"
+        else
           git clone https://github.com/wine-mirror/wine.git wine
+        fi
 
     - name: Download patch
       run: |
