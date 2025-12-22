@@ -410,7 +410,7 @@ jobs:
             --with-sdl \
             --with-cups \
             --with-gstreamer \
-            --enable-archs="x86_64,aarch64" \
+            --enable-archs="aarch64" \
             --host=aarch64-linux-gnu \
             --enable-nls \
             --disable-winemenubuilder \
