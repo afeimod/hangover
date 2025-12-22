@@ -28,7 +28,7 @@ jobs:
         if [ -d "wine" ]; then
           echo "Wine directory already exists"
         else
-          git clone --depth 1 --branch wine-8.0 https://github.com/wine-mirror/wine.git
+          git clone https://github.com/wine-mirror/wine.git wine
         fi
 
     - name: Download patch
