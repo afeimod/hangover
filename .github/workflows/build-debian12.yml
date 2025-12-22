@@ -352,13 +352,29 @@ jobs:
             --with-x \
             --with-vulkan \
             --with-pulse \
-            --with-dbus \
             --with-sdl \
             --with-cups \
             --with-gstreamer \
-            --with-mingw \
             --enable-archs="x86_64,aarch64" \
             --host=aarch64-linux-gnu \
+            --enable-nls \
+            --disable-winemenubuilder \
+            --without-ldap \
+            --without-capi \
+            --without-oss \
+            --without-cups \
+            --without-dbus \
+            --without-coreaudio \
+            --without-gphoto \
+            --without-osmesa \
+            --without-sane \
+            --without-pcap \
+            --without-pcsclite \
+            --without-udev \
+            --without-unwind \
+            --without-usb \
+            --without-v4l2 \
+            --without-wayland \
             --build=aarch64-linux-gnu
         
         # 构建
