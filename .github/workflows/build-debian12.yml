@@ -410,7 +410,8 @@ jobs:
             --with-sdl \
             --with-cups \
             --with-gstreamer \
-            --enable-archs="aarch64" \
+            --enable-archs="i386,aarch64" \
+            --disable-archs="x86_64" \
             --enable-nls \
             --disable-winemenubuilder \
             --without-ldap \
@@ -428,7 +429,11 @@ jobs:
             --without-unwind \
             --without-usb \
             --without-v4l2 \
-            --without-wayland
+            --without-wayland \
+            --host=aarch64-linux-gnu \
+            --build=aarch64-linux-gnu \
+            CFLAGS="-O2 -pipe -march=armv8-a -mtune=cortex-a76 -fno-stack-protector -Wno-error -D__x86_64__=0 -D__i386__=1 -D__aarch64__=1" \
+            CXXFLAGS="-O2 -pipe -march=armv8-a -mtune=cortex-a76 -fno-stack-protector -Wno-error -D__x86_64__=0 -D__i386__=1 -D__aarch64__=1"
         
         # 构建
         echo "Building Proton Wine..."
