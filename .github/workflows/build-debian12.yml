@@ -1,63 +1,146 @@
-name: Build ARM64 Wine for Debian 12
+name: deb-debian12
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - main
-    paths:
-      - '.github/workflows/build-debian12.yml'
+      - '**'
+    paths-ignore:
+      - 'benchmarks/**'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - 'README.md'
+  release:
+    types: [published]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
-  build-wine:
+  foundations-debian12:
     runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+    strategy:
+      matrix:
+        os: [debian12]
 
-    - name: Free disk space
+    steps:
+    - uses: actions/checkout@v1
+    - name: free disk space
       run: |
         sudo swapoff -a
         sudo rm -f /swapfile
         sudo apt clean
         df -h
 
-    - name: Create Dockerfile
-      run: |
-        wget -O Dockerfile https://github.com/afeimod/linbox/raw/main/path/Dockerfile
+    - name: Cache docker image
+      id: cache-foundation
+      uses: actions/cache@v4
+      env:
+        cache-name: cache-foundation
+      with:
+        path: foundation${{ matrix.os }}.tgz
+        key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles(format('.packaging/{0}/Dockerfile', matrix.os)) }}
+        lookup-only: true
 
-    - name: Build Docker image
+    - name: Setup packaging
+      if: ${{ steps.cache-foundation.outputs.cache-hit != 'true' }}
       run: |
-        docker build -t wine-arm64-builder .
+        cp .packaging/${{ matrix.os }}/Dockerfile .
 
-    - name: Run container to extract build
+    - name: Build package
+      if: ${{ steps.cache-foundation.outputs.cache-hit != 'true' }}
+      run: docker build -t foundation${{ matrix.os }} .
+
+    - name: Export docker image
+      if: ${{ steps.cache-foundation.outputs.cache-hit != 'true' }}
+      run: docker image save foundation${{ matrix.os }} | gzip -c > foundation${{ matrix.os }}.tgz
+
+  wine-debian12:
+    needs: foundations-debian12
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v1
+    - name: free disk space
       run: |
-        # 运行容器并提取构建好的Wine
-        docker run --rm --name wine-extractor wine-arm64-builder cat /wine-arm64-debian12.tar.gz > wine-arm64-debian12.tar.gz
-        
-        # 列出文件大小
-        ls -lh wine-arm64-debian12.tar.gz
+        sudo swapoff -a
+        sudo rm -f /swapfile
+        sudo apt clean
+        df -h
 
-    - name: Extract and verify
+    - name: Cache docker image
+      id: cache-foundation
+      uses: actions/cache@v4
+      env:
+        cache-name: cache-foundation
+      with:
+        path: foundationdebian12.tgz
+        key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('.packaging/debian12/Dockerfile') }}
+
+    - name: Import docker image
+      run: docker image load -i foundationdebian12.tgz
+
+    - name: get version
+      run: git describe --tags | sed "s/hangover-/HOVERSION=/" >> "$GITHUB_ENV"; git describe --tags | sed "s/hangover-/HOVERSION=/"
+
+    - name: get shallow submodule
+      run: git submodule update --init --recursive --depth 1 wine
+
+    - name: Setup packaging
       run: |
-        # 提取文件查看内容
-        mkdir -p wine-extracted
-        tar -tzf wine-arm64-debian12.tar.gz | head -20
-        
-        # 显示大小
-        echo "压缩包大小:"
-        du -h wine-arm64-debian12.tar.gz
+        cp -r .packaging/debian12/wine/* wine
+        sed -i "s/HOVERSION/${HOVERSION}/g" wine/Dockerfile
+        nproc
 
-    - name: Upload artifact
+    - name: Apply wine patch
+      run: |
+        cd wine
+        wget -O wine_do_not_create_dxgi_manager2.patch https://github.com/afeimod/linbox/raw/main/path/wine_do_not_create_dxgi_manager2.patch
+        if [ -f wine_do_not_create_dxgi_manager2.patch ]; then
+          patch -p1 < wine_do_not_create_dxgi_manager2.patch || echo "Patch application failed or already applied"
+        else
+          echo "Failed to download patch"
+        fi
+
+    - name: Adjust changelog for intermediate
+      if: github.event_name != 'release'
+      run: |
+        cp wine/debian/changelog wine/debian/changelog.old
+        echo "hangover-wine (${HOVERSION}~bookworm) UNRELEASED; urgency=low" > wine/debian/changelog.entry
+        echo "" >> wine/debian/changelog.entry
+        echo "  * Intermediate build ${HOVERSION}~bookworm" >> wine/debian/changelog.entry
+        echo "" >> wine/debian/changelog.entry
+        echo -n " -- André Zwing <nerv@dawncrow.de>  " >> wine/debian/changelog.entry
+        LC_TIME=en_US.UTF-8 date "+%a, %d %b %Y %H:%M:%S %z" >> wine/debian/changelog.entry
+        echo "" >> wine/debian/changelog.entry
+        cat wine/debian/changelog.entry wine/debian/changelog.old > wine/debian/changelog
+        rm wine/debian/changelog.entry wine/debian/changelog.old
+        cat wine/debian/changelog
+
+    - name: Adjust changelog for release
+      if: github.event_name == 'release'
+      run: |
+        cp wine/debian/changelog wine/debian/changelog.old
+        echo "hangover-wine (${HOVERSION}~bookworm) UNRELEASED; urgency=low" > wine/debian/changelog.entry
+        echo "" >> wine/debian/changelog.entry
+        echo "  * Release ${HOVERSION}~bookworm" >> wine/debian/changelog.entry
+        echo "" >> wine/debian/changelog.entry
+        echo -n " -- André Zwing <nerv@dawncrow.de>  " >> wine/debian/changelog.entry
+        LC_TIME=en_US.UTF-8 date "+%a, %d %b %Y %H:%M:%S %z" >> wine/debian/changelog.entry
+        echo "" >> wine/debian/changelog.entry
+        cat wine/debian/changelog.entry wine/debian/changelog.old > wine/debian/changelog
+        rm wine/debian/changelog.entry wine/debian/changelog.old
+        cat wine/debian/changelog
+
+    - name: Build package
+      run: cd wine; docker build -t wine-debian12 .
+
+    - name: Extract package
+      run: docker run --rm wine-debian12 cat /opt/hangover-wine_${{ env.HOVERSION }}~bookworm_arm64.deb > hangover-wine_${{ env.HOVERSION }}~bookworm_arm64.deb
+
+    - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: wine-arm64-debian12
-        path: wine-arm64-debian12.tar.gz
-        retention-days: 7
-
-    - name: Upload as release (if tagged)
-      if: startsWith(github.ref, 'refs/tags/')
-      uses: softprops/action-gh-release@v1
-      with:
-        files: wine-arm64-debian12.tar.gz
+        name: hangover-wine_${{ env.HOVERSION }}~bookworm_arm64.deb
+        path: hangover-wine_${{ env.HOVERSION }}~bookworm_arm64.deb
