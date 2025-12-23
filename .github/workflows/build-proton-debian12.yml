@@ -87,7 +87,7 @@ jobs:
     - name: Clone Proton source
       run: |
         rm -rf wine
-        git clone --depth 1 https://github.com/ValveSoftware/wine.git wine
+        git clone https://github.com/ValveSoftware/wine.git wine
         cd wine
         # 切换到 Proton 的最新稳定分支（根据实际情况调整）
         git checkout proton_10.0
