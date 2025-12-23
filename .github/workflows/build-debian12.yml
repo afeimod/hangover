@@ -6,7 +6,7 @@ on:
     branches:
       - main
     paths:
-      - '.github/workflows/build-wine-arm64.yml'
+      - '.github/workflows/build-debian12.yml'
 
 jobs:
   build-wine:
@@ -22,18 +22,6 @@ jobs:
         sudo rm -f /swapfile
         sudo apt clean
         df -h
-
-    - name: Get Wine source code
-      run: |
-        if [ -d "wine" ]; then
-          echo "Wine directory already exists"
-        else
-          git clone https://github.com/wine-mirror/wine.git wine
-        fi
-
-    - name: Download patch
-      run: |
-        wget -O wine_do_not_create_dxgi_manager2.patch https://github.com/afeimod/linbox/raw/main/path/wine_do_not_create_dxgi_manager2.patch
 
     - name: Create Dockerfile
       run: |
