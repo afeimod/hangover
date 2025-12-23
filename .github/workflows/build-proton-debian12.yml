@@ -1,0 +1,162 @@
+name: deb-proton-debian12
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - '**'
+    paths-ignore:
+      - 'benchmarks/**'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - 'README.md'
+  release:
+    types: [published]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  foundations-debian12:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [debian12]
+
+    steps:
+    - uses: actions/checkout@v1
+    - name: free disk space
+      run: |
+        sudo swapoff -a
+        sudo rm -f /swapfile
+        sudo apt clean
+        df -h
+
+    - name: Cache docker image
+      id: cache-foundation
+      uses: actions/cache@v4
+      env:
+        cache-name: cache-foundation
+      with:
+        path: foundation${{ matrix.os }}.tgz
+        key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles(format('.packaging/{0}/Dockerfile', matrix.os)) }}
+        lookup-only: true
+
+    - name: Setup packaging
+      if: ${{ steps.cache-foundation.outputs.cache-hit != 'true' }}
+      run: |
+        cp .packaging/${{ matrix.os }}/Dockerfile .
+
+    - name: Build package
+      if: ${{ steps.cache-foundation.outputs.cache-hit != 'true' }}
+      run: docker build -t foundation${{ matrix.os }} .
+
+    - name: Export docker image
+      if: ${{ steps.cache-foundation.outputs.cache-hit != 'true' }}
+      run: docker image save foundation${{ matrix.os }} | gzip -c > foundation${{ matrix.os }}.tgz
+
+  wine-debian12:
+    needs: foundations-debian12
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v1
+    - name: free disk space
+      run: |
+        sudo swapoff -a
+        sudo rm -f /swapfile
+        sudo apt clean
+        df -h
+
+    - name: Cache docker image
+      id: cache-foundation
+      uses: actions/cache@v4
+      env:
+        cache-name: cache-foundation
+      with:
+        path: foundationdebian12.tgz
+        key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('.packaging/debian12/Dockerfile') }}
+
+    - name: Import docker image
+      run: docker image load -i foundationdebian12.tgz
+
+    - name: get version
+      run: git describe --tags | sed "s/hangover-/HOVERSION=/" >> "$GITHUB_ENV"; git describe --tags | sed "s/hangover-/HOVERSION=/"
+
+    - name: Clone Proton source
+      run: |
+        rm -rf wine
+        git clone --depth 1 https://github.com/ValveSoftware/wine.git wine
+        cd wine
+        # 切换到 Proton 的最新稳定分支（根据实际情况调整）
+        git checkout proton_10.0
+
+    - name: Install build dependencies for autogen
+      run: |
+        sudo apt update
+        sudo apt install -y autoconf automake bison flex libtool gettext
+
+    - name: Generate configure script for Proton
+      run: |
+        cd wine
+        echo "生成 configure 脚本..."
+        ./autogen.sh || echo "autogen.sh 可能失败，但继续构建..."
+
+    - name: Setup packaging
+      run: |
+        cp -r .packaging/debian12/wine/* wine
+        sed -i "s/HOVERSION/${HOVERSION}/g" wine/Dockerfile
+        nproc
+
+    - name: Apply wine patch
+      run: |
+        cd wine
+        wget -O ffmpeg_api_fix.patch https://github.com/afeimod/linbox/raw/main/path/ffmpeg_api_fix.patch
+        if [ -f ffmpeg_api_fix.patch ]; then
+          patch -p1 < ffmpeg_api_fix.patch || echo "Patch application failed or already applied"
+        else
+          echo "Failed to download patch"
+        fi
+
+    - name: Adjust changelog for intermediate
+      if: github.event_name != 'release'
+      run: |
+        cp wine/debian/changelog wine/debian/changelog.old
+        echo "hangover-wine (${HOVERSION}~bookworm) UNRELEASED; urgency=low" > wine/debian/changelog.entry
+        echo "" >> wine/debian/changelog.entry
+        echo "  * Intermediate build ${HOVERSION}~bookworm" >> wine/debian/changelog.entry
+        echo "" >> wine/debian/changelog.entry
+        echo -n " -- André Zwing <nerv@dawncrow.de>  " >> wine/debian/changelog.entry
+        LC_TIME=en_US.UTF-8 date "+%a, %d %b %Y %H:%M:%S %z" >> wine/debian/changelog.entry
+        echo "" >> wine/debian/changelog.entry
+        cat wine/debian/changelog.entry wine/debian/changelog.old > wine/debian/changelog
+        rm wine/debian/changelog.entry wine/debian/changelog.old
+        cat wine/debian/changelog
+
+    - name: Adjust changelog for release
+      if: github.event_name == 'release'
+      run: |
+        cp wine/debian/changelog wine/debian/changelog.old
+        echo "hangover-wine (${HOVERSION}~bookworm) UNRELEASED; urgency=low" > wine/debian/changelog.entry
+        echo "" >> wine/debian/changelog.entry
+        echo "  * Release ${HOVERSION}~bookworm" >> wine/debian/changelog.entry
+        echo "" >> wine/debian/changelog.entry
+        echo -n " -- André Zwing <nerv@dawncrow.de>  " >> wine/debian/changelog.entry
+        LC_TIME=en_US.UTF-8 date "+%a, %d %b %Y %H:%M:%S %z" >> wine/debian/changelog.entry
+        echo "" >> wine/debian/changelog.entry
+        cat wine/debian/changelog.entry wine/debian/changelog.old > wine/debian/changelog
+        rm wine/debian/changelog.entry wine/debian/changelog.old
+        cat wine/debian/changelog
+
+    - name: Build package
+      run: cd wine; docker build -t wine-debian12 .
+
+    - name: Extract package
+      run: docker run --rm wine-debian12 cat /opt/hangover-wine_${{ env.HOVERSION }}~bookworm_arm64.deb > hangover-wine_${{ env.HOVERSION }}~bookworm_arm64.deb
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: hangover-wine_${{ env.HOVERSION }}~bookworm_arm64.deb
+        path: hangover-wine_${{ env.HOVERSION }}~bookworm_arm64.deb
