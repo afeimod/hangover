@@ -80,9 +80,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v1
+    - uses: actions/checkout@v3
       with:
         ref: ${{ github.event.inputs.hangover_version == 'latest' && 'main' || github.event.inputs.hangover_version }}
+        submodules: false  # 关键：不下载子模块
     
     - name: free disk space
       run: |
@@ -116,18 +117,18 @@ jobs:
         
         # 设置 wine 版本
         if [ "${{ github.event.inputs.wine_version }}" = "latest" ]; then
-          # 获取最新的 wine tag
+          # 获取 AndreRH/wine 的最新标签
           WINE_TAG="wine-9.0"  # 默认值
+          echo "Using default wine tag: $WINE_TAG"
         else
           WINE_TAG="${{ github.event.inputs.wine_version }}"
+          echo "Using specified wine tag: $WINE_TAG"
         fi
-        
-        echo "Using wine tag: $WINE_TAG"
         
         # 从 wine tag 中提取版本号
         if [[ "$WINE_TAG" =~ wine-([0-9]+\.[0-9]+) ]]; then
           WINE_VERSION="${BASH_REMATCH[1]}"
-          echo "Extracted wine version: $WINE_VERSION"
+          echo "Extracted wine version from tag: $WINE_VERSION"
         elif [[ "$WINE_TAG" =~ ([0-9]+\.[0-9]+) ]]; then
           WINE_VERSION="${BASH_REMATCH[1]}"
           echo "Extracted wine version: $WINE_VERSION"
@@ -152,7 +153,7 @@ jobs:
         echo "  Hangover: $HOVERSION"
         echo "  Wine Tag: $WINE_TAG"
         echo "  Wine Version: $WINE_VERSION"
-        echo "  Wine Major: $WINE_VERSION_MAJOR, Minor: $WINE_VERSION_MINOR"
+        echo "  Wine Major: $VERSION_MAJOR, Minor: $VERSION_MINOR"
 
     - name: Download specific wine version from AndreRH/wine
       run: |
@@ -161,55 +162,68 @@ jobs:
         
         # 清理现有的 wine 目录
         rm -rf wine
-        mkdir -p wine
         
-        cd wine
+        # 使用 git clone 直接获取特定版本的 wine
+        # 使用 --branch 参数指定标签，--depth 1 只获取最新提交
+        echo "Cloning AndreRH/wine with tag ${{ env.WINE_TAG }}..."
         
-        # 初始化 git 仓库
-        git init
-        git remote add origin https://github.com/AndreRH/wine.git
-        
-        # 获取所有标签
-        echo "Fetching tags from AndreRH/wine..."
-        git fetch --tags --depth 1
-        
-        # 检查标签是否存在
-        if git show-ref --tags --quiet "refs/tags/${{ env.WINE_TAG }}"; then
-          echo "Tag ${{ env.WINE_TAG }} exists, checking out..."
-          git checkout "tags/${{ env.WINE_TAG }}" --depth 1
-        elif git show-ref --tags --quiet "refs/tags/wine-${{ env.WINE_VERSION }}"; then
-          echo "Tag wine-${{ env.WINE_VERSION }} exists, checking out..."
-          git checkout "tags/wine-${{ env.WINE_VERSION }}" --depth 1
+        # 尝试不同的标签格式
+        if git clone --branch "${{ env.WINE_TAG }}" --depth 1 https://github.com/AndreRH/wine.git wine; then
+          echo "Successfully cloned wine with tag ${{ env.WINE_TAG }}"
+        elif git clone --branch "wine-${{ env.WINE_VERSION }}" --depth 1 https://github.com/AndreRH/wine.git wine; then
+          echo "Successfully cloned wine with tag wine-${{ env.WINE_VERSION }}"
           echo "WINE_TAG=wine-${{ env.WINE_VERSION }}" >> $GITHUB_ENV
         else
-          echo "Warning: Tag ${{ env.WINE_TAG }} not found, trying to find closest version..."
+          echo "Warning: Could not clone with specified tag, trying to find available tags..."
           
-          # 获取所有标签并排序，选择最接近的版本
-          TAGS=$(git tag -l | grep -E "^wine-[0-9]+\.[0-9]+$" | sort -V -r)
+          # 先克隆仓库
+          git clone --depth 1 https://github.com/AndreRH/wine.git wine
+          cd wine
           
-          if [ -n "$TAGS" ]; then
-            CLOSEST_TAG=$(echo "$TAGS" | head -1)
-            echo "Closest tag found: $CLOSEST_TAG"
-            git checkout "tags/$CLOSEST_TAG" --depth 1
-            echo "WINE_TAG=$CLOSEST_TAG" >> $GITHUB_ENV
+          # 获取所有标签
+          git fetch --tags --depth 1
+          
+          # 列出所有 wine- 开头的标签
+          WINE_TAGS=$(git tag -l "wine-*" | sort -V -r)
+          
+          if [ -n "$WINE_TAGS" ]; then
+            # 尝试匹配指定的版本
+            for TAG in $WINE_TAGS; do
+              if [[ "$TAG" == *"${{ env.WINE_VERSION }}"* ]]; then
+                echo "Found matching tag: $TAG"
+                git checkout "$TAG"
+                echo "WINE_TAG=$TAG" >> $GITHUB_ENV
+                
+                # 更新版本信息
+                if [[ "$TAG" =~ wine-([0-9]+\.[0-9]+) ]]; then
+                  WINE_VERSION="${BASH_REMATCH[1]}"
+                  echo "WINE_VERSION=$WINE_VERSION" >> $GITHUB_ENV
+                  
+                  WINE_VERSION_MAJOR=$(echo "$WINE_VERSION" | cut -d. -f1)
+                  WINE_VERSION_MINOR=$(echo "$WINE_VERSION" | cut -d. -f2)
+                  echo "WINE_VERSION_MAJOR=$WINE_VERSION_MAJOR" >> $GITHUB_ENV
+                  echo "WINE_VERSION_MINOR=$WINE_VERSION_MINOR" >> $GITHUB_ENV
+                fi
+                break
+              fi
+            done
             
-            # 更新版本信息
-            if [[ "$CLOSEST_TAG" =~ wine-([0-9]+\.[0-9]+) ]]; then
-              WINE_VERSION="${BASH_REMATCH[1]}"
-              echo "WINE_VERSION=$WINE_VERSION" >> $GITHUB_ENV
-              
-              WINE_VERSION_MAJOR=$(echo "$WINE_VERSION" | cut -d. -f1)
-              WINE_VERSION_MINOR=$(echo "$WINE_VERSION" | cut -d. -f2)
-              echo "WINE_VERSION_MAJOR=$WINE_VERSION_MAJOR" >> $GITHUB_ENV
-              echo "WINE_VERSION_MINOR=$WINE_VERSION_MINOR" >> $GITHUB_ENV
+            # 如果没找到匹配的，使用最新标签
+            if [ -z "$(git describe --tags)" ]; then
+              LATEST_TAG=$(echo "$WINE_TAGS" | head -1)
+              echo "Using latest tag: $LATEST_TAG"
+              git checkout "$LATEST_TAG"
+              echo "WINE_TAG=$LATEST_TAG" >> $GITHUB_ENV
             fi
           else
             echo "Error: No wine tags found in AndreRH/wine repository"
             exit 1
           fi
+          cd ..
         fi
         
         # 获取提交信息
+        cd wine
         WINE_COMMIT=$(git rev-parse --short HEAD)
         echo "WINE_COMMIT=$WINE_COMMIT" >> $GITHUB_ENV
         echo "Wine commit: $WINE_COMMIT"
@@ -224,6 +238,7 @@ jobs:
 
     - name: Setup packaging
       run: |
+        # 复制打包文件到 wine 目录
         cp -r .packaging/debian12/wine/* wine
         sed -i "s/HOVERSION/${{ env.HOVERSION }}/g" wine/Dockerfile
         nproc
