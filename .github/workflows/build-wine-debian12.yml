@@ -4,12 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       hangover_version:
-        description: 'Hangover 版本号 (如: 0.9.0, 0.8.0) 或 latest'
+        description: 'Hangover 版本号 (如: 0.9.0, 0.8.0)'
         required: true
         default: 'latest'
         type: string
       wine_version:
-        description: 'Wine 版本号 (如: wine-9.10, wine-9.0, wine-8.0) 或 latest'
+        description: 'Wine 版本号 (如: wine-9.10, wine-9.0, wine-8.0)'
         required: true
         default: 'latest'
         type: string
@@ -80,10 +80,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v1
       with:
         ref: ${{ github.event.inputs.hangover_version == 'latest' && 'main' || github.event.inputs.hangover_version }}
-        submodules: false  # 关键：不下载子模块
     
     - name: free disk space
       run: |
@@ -108,7 +107,7 @@ jobs:
       run: |
         # 设置 hangover 版本
         if [ "${{ github.event.inputs.hangover_version }}" = "latest" ]; then
-          HOVERSION=$(git describe --tags --abbrev=0 | sed 's/hangover-//')
+          HOVERSION=$(git describe --tags --abbrev=0)
         else
           HOVERSION="${{ github.event.inputs.hangover_version }}"
         fi
@@ -117,24 +116,27 @@ jobs:
         
         # 设置 wine 版本
         if [ "${{ github.event.inputs.wine_version }}" = "latest" ]; then
-          # 获取 AndreRH/wine 的最新标签
-          WINE_TAG="wine-9.0"  # 默认值
-          echo "Using default wine tag: $WINE_TAG"
+          # 获取最新的 wine tag
+          git submodule update --init --recursive wine
+          cd wine
+          WINE_TAG=$(git describe --tags --abbrev=0)
+          cd ..
         else
           WINE_TAG="${{ github.event.inputs.wine_version }}"
-          echo "Using specified wine tag: $WINE_TAG"
         fi
+        
+        echo "Using wine tag: $WINE_TAG"
         
         # 从 wine tag 中提取版本号
         if [[ "$WINE_TAG" =~ wine-([0-9]+\.[0-9]+) ]]; then
           WINE_VERSION="${BASH_REMATCH[1]}"
-          echo "Extracted wine version from tag: $WINE_VERSION"
+          echo "Extracted wine version: $WINE_VERSION"
         elif [[ "$WINE_TAG" =~ ([0-9]+\.[0-9]+) ]]; then
           WINE_VERSION="${BASH_REMATCH[1]}"
           echo "Extracted wine version: $WINE_VERSION"
         else
-          WINE_VERSION="9.0"
-          echo "Using default wine version: $WINE_VERSION"
+          WINE_VERSION="$WINE_TAG"
+          echo "Using wine tag as version: $WINE_VERSION"
         fi
         
         # 提取主次版本
@@ -153,95 +155,52 @@ jobs:
         echo "  Hangover: $HOVERSION"
         echo "  Wine Tag: $WINE_TAG"
         echo "  Wine Version: $WINE_VERSION"
-        echo "  Wine Major: $VERSION_MAJOR, Minor: $VERSION_MINOR"
+        echo "  Wine Major: $WINE_VERSION_MAJOR, Minor: $WINE_VERSION_MINOR"
 
-    - name: Download specific wine version from AndreRH/wine
+    - name: Checkout specific wine version
       run: |
-        echo "Downloading wine from AndreRH/wine repository..."
-        echo "Wine tag: ${{ env.WINE_TAG }}"
+        echo "Checking out wine version: ${{ env.WINE_TAG }}"
+        git submodule update --init --recursive wine
+        cd wine
         
-        # 清理现有的 wine 目录
-        rm -rf wine
+        # 获取所有远程标签
+        git fetch --tags
         
-        # 使用 git clone 直接获取特定版本的 wine
-        # 使用 --branch 参数指定标签，--depth 1 只获取最新提交
-        echo "Cloning AndreRH/wine with tag ${{ env.WINE_TAG }}..."
-        
-        # 尝试不同的标签格式
-        if git clone --branch "${{ env.WINE_TAG }}" --depth 1 https://github.com/AndreRH/wine.git wine; then
-          echo "Successfully cloned wine with tag ${{ env.WINE_TAG }}"
-        elif git clone --branch "wine-${{ env.WINE_VERSION }}" --depth 1 https://github.com/AndreRH/wine.git wine; then
-          echo "Successfully cloned wine with tag wine-${{ env.WINE_VERSION }}"
-          echo "WINE_TAG=wine-${{ env.WINE_VERSION }}" >> $GITHUB_ENV
+        # 尝试切换到指定的 wine 版本
+        if git checkout "${{ env.WINE_TAG }}" 2>/dev/null; then
+          echo "Successfully checked out wine tag: ${{ env.WINE_TAG }}"
+        elif git checkout "wine-${{ env.WINE_TAG }}" 2>/dev/null; then
+          echo "Successfully checked out wine tag: wine-${{ env.WINE_TAG }}"
+          echo "WINE_TAG=wine-${{ env.WINE_TAG }}" >> $GITHUB_ENV
         else
-          echo "Warning: Could not clone with specified tag, trying to find available tags..."
-          
-          # 先克隆仓库
-          git clone --depth 1 https://github.com/AndreRH/wine.git wine
-          cd wine
-          
-          # 获取所有标签
-          git fetch --tags --depth 1
-          
-          # 列出所有 wine- 开头的标签
-          WINE_TAGS=$(git tag -l "wine-*" | sort -V -r)
-          
-          if [ -n "$WINE_TAGS" ]; then
-            # 尝试匹配指定的版本
-            for TAG in $WINE_TAGS; do
-              if [[ "$TAG" == *"${{ env.WINE_VERSION }}"* ]]; then
-                echo "Found matching tag: $TAG"
-                git checkout "$TAG"
-                echo "WINE_TAG=$TAG" >> $GITHUB_ENV
-                
-                # 更新版本信息
-                if [[ "$TAG" =~ wine-([0-9]+\.[0-9]+) ]]; then
-                  WINE_VERSION="${BASH_REMATCH[1]}"
-                  echo "WINE_VERSION=$WINE_VERSION" >> $GITHUB_ENV
-                  
-                  WINE_VERSION_MAJOR=$(echo "$WINE_VERSION" | cut -d. -f1)
-                  WINE_VERSION_MINOR=$(echo "$WINE_VERSION" | cut -d. -f2)
-                  echo "WINE_VERSION_MAJOR=$WINE_VERSION_MAJOR" >> $GITHUB_ENV
-                  echo "WINE_VERSION_MINOR=$WINE_VERSION_MINOR" >> $GITHUB_ENV
-                fi
-                break
-              fi
-            done
-            
-            # 如果没找到匹配的，使用最新标签
-            if [ -z "$(git describe --tags)" ]; then
-              LATEST_TAG=$(echo "$WINE_TAGS" | head -1)
-              echo "Using latest tag: $LATEST_TAG"
-              git checkout "$LATEST_TAG"
-              echo "WINE_TAG=$LATEST_TAG" >> $GITHUB_ENV
-            fi
-          else
-            echo "Error: No wine tags found in AndreRH/wine repository"
-            exit 1
-          fi
-          cd ..
+          echo "Error: Could not checkout wine version ${{ env.WINE_TAG }}"
+          echo "Available tags:"
+          git tag | head -20
+          exit 1
         fi
         
-        # 获取提交信息
-        cd wine
+        # 获取实际的提交信息
         WINE_COMMIT=$(git rev-parse --short HEAD)
         echo "WINE_COMMIT=$WINE_COMMIT" >> $GITHUB_ENV
         echo "Wine commit: $WINE_COMMIT"
-        
-        # 显示 wine 版本信息
-        echo "Wine version details:"
-        if [ -f "VERSION" ]; then
-          cat VERSION
-        fi
         
         cd ..
 
     - name: Setup packaging
       run: |
-        # 复制打包文件到 wine 目录
         cp -r .packaging/debian12/wine/* wine
         sed -i "s/HOVERSION/${{ env.HOVERSION }}/g" wine/Dockerfile
         nproc
+
+    - name: Apply wine patch
+      run: |
+        cd wine
+        wget -O wine_do_not_create_dxgi_manager2.patch https://github.com/afeimod/linbox/raw/main/path/wine_do_not_create_dxgi_manager2.patch
+        if [ -f wine_do_not_create_dxgi_manager2.patch ]; then
+          patch -p1 < wine_do_not_create_dxgi_manager2.patch || echo "Patch application failed or already applied"
+        else
+          echo "Failed to download patch"
+        fi
 
     - name: Apply version-specific fixes
       run: |
@@ -253,7 +212,10 @@ jobs:
         # 判断版本是否 >= 9.10
         if [ "${{ env.WINE_VERSION_MAJOR }}" -gt 9 ] || [ "${{ env.WINE_VERSION_MAJOR }}" -eq 9 -a "${{ env.WINE_VERSION_MINOR }}" -ge 10 ]; then
           echo "Wine version >= 9.10, applying wine_do_not_create_dxgi_manager2.patch"
-          wget -O wine_do_not_create_dxgi_manager2.patch https://github.com/afeimod/linbox/raw/main/path/wine_do_not_create_dxgi_manager2.patch
+          # 确保补丁已下载
+          if [ ! -f wine_do_not_create_dxgi_manager2.patch ]; then
+            wget -O wine_do_not_create_dxgi_manager2.patch https://github.com/afeimod/linbox/raw/main/path/wine_do_not_create_dxgi_manager2.patch
+          fi
           
           if [ -f wine_do_not_create_dxgi_manager2.patch ]; then
             echo "Applying 9.10+ patch..."
@@ -350,7 +312,7 @@ jobs:
         echo "hangover-wine (${{ env.HOVERSION }}~bookworm) UNRELEASED; urgency=low" > wine/debian/changelog.entry
         echo "" >> wine/debian/changelog.entry
         echo "  * Intermediate build ${{ env.HOVERSION }}~bookworm" >> wine/debian/changelog.entry
-        echo "  * Built with wine ${{ env.WINE_TAG }} from AndreRH/wine (commit: ${{ env.WINE_COMMIT }})" >> wine/debian/changelog.entry
+        echo "  * Built with wine ${{ env.WINE_TAG }} (commit: ${{ env.WINE_COMMIT }})" >> wine/debian/changelog.entry
         echo "  * Wine version: ${{ env.WINE_VERSION }}" >> wine/debian/changelog.entry
         echo "  * Staging patches: ${{ env.APPLY_STAGING }}" >> wine/debian/changelog.entry
         echo "" >> wine/debian/changelog.entry
@@ -368,7 +330,7 @@ jobs:
         echo "hangover-wine (${{ env.HOVERSION }}~bookworm) UNRELEASED; urgency=low" > wine/debian/changelog.entry
         echo "" >> wine/debian/changelog.entry
         echo "  * Release ${{ env.HOVERSION }}~bookworm" >> wine/debian/changelog.entry
-        echo "  * Built with wine ${{ env.WINE_TAG }} from AndreRH/wine (commit: ${{ env.WINE_COMMIT }})" >> wine/debian/changelog.entry
+        echo "  * Built with wine ${{ env.WINE_TAG }} (commit: ${{ env.WINE_COMMIT }})" >> wine/debian/changelog.entry
         echo "  * Wine version: ${{ env.WINE_VERSION }}" >> wine/debian/changelog.entry
         echo "  * Staging patches: ${{ env.APPLY_STAGING }}" >> wine/debian/changelog.entry
         echo "" >> wine/debian/changelog.entry
