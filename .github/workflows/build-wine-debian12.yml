@@ -3,22 +3,18 @@ name: deb-wine-debian12
 on:
   workflow_dispatch:
     inputs:
-      wine_version:
-        description: 'Wine 版本号 (如: 9.10, 9.0, 8.0)'
-        required: false
-        default: 'auto'
+      hangover_version:
+        description: 'Hangover 版本号 (如: 0.9.0, 0.8.0)'
+        required: true
+        default: 'latest'
         type: string
-      wine_branch:
-        description: 'Wine 分支类型'
-        required: false
-        default: 'staging'
-        type: choice
-        options:
-        - vanilla
-        - staging
-        - proton
-      apply_staging_patches:
-        description: '是否应用 Staging 补丁'
+      wine_version:
+        description: 'Wine 版本号 (如: wine-9.10, wine-9.0, wine-8.0)'
+        required: true
+        default: 'latest'
+        type: string
+      apply_staging:
+        description: '是否应用 Wine Staging 补丁'
         required: false
         default: 'yes'
         type: choice
@@ -85,6 +81,9 @@ jobs:
 
     steps:
     - uses: actions/checkout@v1
+      with:
+        ref: ${{ github.event.inputs.hangover_version == 'latest' && 'main' || github.event.inputs.hangover_version }}
+    
     - name: free disk space
       run: |
         sudo swapoff -a
@@ -104,87 +103,88 @@ jobs:
     - name: Import docker image
       run: docker image load -i foundationdebian12.tgz
 
-    - name: get hangover version
+    - name: Set versions from input
       run: |
-        HOVERSION=$(git describe --tags | sed 's/hangover-//')
-        echo "HOVERSION=$HOVERSION" >> $GITHUB_ENV
-        echo "Hangover version: $HOVERSION"
-
-    - name: Determine wine version
-      run: |
-        # 如果手动输入了 wine 版本号，使用它
-        if [ "${{ github.event.inputs.wine_version }}" != "auto" ] && [ -n "${{ github.event.inputs.wine_version }}" ]; then
-          WINE_VERSION="${{ github.event.inputs.wine_version }}"
-          echo "Using manually specified wine version: $WINE_VERSION"
-          
-          # 从输入的版本号中提取主次版本
-          if [[ "$WINE_VERSION" =~ ([0-9]+)\.([0-9]+) ]]; then
-            WINE_VERSION_MAJOR="${BASH_REMATCH[1]}"
-            WINE_VERSION_MINOR="${BASH_REMATCH[2]}"
-            echo "Parsed version: Major=$WINE_VERSION_MAJOR, Minor=$WINE_VERSION_MINOR"
-          else
-            echo "Warning: Could not parse wine version, assuming 9.0"
-            WINE_VERSION_MAJOR="9"
-            WINE_VERSION_MINOR="0"
-          fi
+        # 设置 hangover 版本
+        if [ "${{ github.event.inputs.hangover_version }}" = "latest" ]; then
+          HOVERSION=$(git describe --tags --abbrev=0)
         else
-          # 自动获取 wine 版本
-          echo "Automatically determining wine version from submodule..."
+          HOVERSION="${{ github.event.inputs.hangover_version }}"
+        fi
+        echo "HOVERSION=$HOVERSION" >> $GITHUB_ENV
+        echo "Using hangover version: $HOVERSION"
+        
+        # 设置 wine 版本
+        if [ "${{ github.event.inputs.wine_version }}" = "latest" ]; then
+          # 获取最新的 wine tag
+          git submodule update --init --recursive wine
           cd wine
-          
-          # 从 git 标签获取版本
-          WINE_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-          if [ -n "$WINE_TAG" ]; then
-            WINE_VERSION=$(echo "$WINE_TAG" | sed 's/^wine-//i' | sed 's/^WINE-//i' | sed 's/^v//i')
-            echo "Extracted version from tag $WINE_TAG: $WINE_VERSION"
-          fi
-          
-          # 从 configure.ac 获取版本
-          if [ -f "configure.ac" ] && [ -z "$WINE_VERSION" ]; then
-            WINE_MAJOR=$(grep -m1 "define(\[WINE_MAJOR_VERSION\]," configure.ac | tr -d '[]' | awk -F, '{print $2}' | tr -d ' )')
-            WINE_MINOR=$(grep -m1 "define(\[WINE_MINOR_VERSION\]," configure.ac | tr -d '[]' | awk -F, '{print $2}' | tr -d ' )')
-            WINE_VERSION="${WINE_MAJOR}.${WINE_MINOR}"
-            echo "Extracted version from configure.ac: $WINE_VERSION"
-          fi
-          
-          # 从 VERSION 文件获取版本
-          if [ -f "VERSION" ] && [ -z "$WINE_VERSION" ]; then
-            WINE_VERSION=$(cat VERSION | sed 's/^wine-//i' | head -1)
-            echo "Extracted version from VERSION file: $WINE_VERSION"
-          fi
-          
-          # 默认值
-          if [ -z "$WINE_VERSION" ]; then
-            WINE_VERSION="9.0"
-            echo "Using default wine version: $WINE_VERSION"
-          fi
-          
-          # 提取主次版本
-          WINE_VERSION_MAJOR=$(echo "$WINE_VERSION" | cut -d. -f1)
-          WINE_VERSION_MINOR=$(echo "$WINE_VERSION" | cut -d. -f2)
+          WINE_TAG=$(git describe --tags --abbrev=0)
           cd ..
+        else
+          WINE_TAG="${{ github.event.inputs.wine_version }}"
         fi
         
-        # 保存到环境变量
+        echo "Using wine tag: $WINE_TAG"
+        
+        # 从 wine tag 中提取版本号
+        if [[ "$WINE_TAG" =~ wine-([0-9]+\.[0-9]+) ]]; then
+          WINE_VERSION="${BASH_REMATCH[1]}"
+          echo "Extracted wine version: $WINE_VERSION"
+        elif [[ "$WINE_TAG" =~ ([0-9]+\.[0-9]+) ]]; then
+          WINE_VERSION="${BASH_REMATCH[1]}"
+          echo "Extracted wine version: $WINE_VERSION"
+        else
+          WINE_VERSION="$WINE_TAG"
+          echo "Using wine tag as version: $WINE_VERSION"
+        fi
+        
+        # 提取主次版本
+        WINE_VERSION_MAJOR=$(echo "$WINE_VERSION" | cut -d. -f1)
+        WINE_VERSION_MINOR=$(echo "$WINE_VERSION" | cut -d. -f2)
+        
+        echo "WINE_TAG=$WINE_TAG" >> $GITHUB_ENV
         echo "WINE_VERSION=$WINE_VERSION" >> $GITHUB_ENV
         echo "WINE_VERSION_MAJOR=$WINE_VERSION_MAJOR" >> $GITHUB_ENV
         echo "WINE_VERSION_MINOR=$WINE_VERSION_MINOR" >> $GITHUB_ENV
         
-        # 保存分支信息
-        WINE_BRANCH="${{ github.event.inputs.wine_branch || 'staging' }}"
-        echo "WINE_BRANCH=$WINE_BRANCH" >> $GITHUB_ENV
+        # 设置是否应用 staging 补丁
+        echo "APPLY_STAGING=${{ github.event.inputs.apply_staging || 'yes' }}" >> $GITHUB_ENV
         
-        # 保存是否应用 staging 补丁
-        APPLY_STAGING="${{ github.event.inputs.apply_staging_patches || 'yes' }}"
-        echo "APPLY_STAGING=$APPLY_STAGING" >> $GITHUB_ENV
-        
-        echo "Final version info:"
-        echo "  Wine Version: $WINE_VERSION (Major: $WINE_VERSION_MAJOR, Minor: $WINE_VERSION_MINOR)"
-        echo "  Wine Branch: $WINE_BRANCH"
-        echo "  Apply Staging: $APPLY_STAGING"
+        echo "Version info:"
+        echo "  Hangover: $HOVERSION"
+        echo "  Wine Tag: $WINE_TAG"
+        echo "  Wine Version: $WINE_VERSION"
+        echo "  Wine Major: $WINE_VERSION_MAJOR, Minor: $WINE_VERSION_MINOR"
 
-    - name: get shallow submodule
-      run: git submodule update --init --recursive --depth 1 wine
+    - name: Checkout specific wine version
+      run: |
+        echo "Checking out wine version: ${{ env.WINE_TAG }}"
+        git submodule update --init --recursive wine
+        cd wine
+        
+        # 获取所有远程标签
+        git fetch --tags
+        
+        # 尝试切换到指定的 wine 版本
+        if git checkout "${{ env.WINE_TAG }}" 2>/dev/null; then
+          echo "Successfully checked out wine tag: ${{ env.WINE_TAG }}"
+        elif git checkout "wine-${{ env.WINE_TAG }}" 2>/dev/null; then
+          echo "Successfully checked out wine tag: wine-${{ env.WINE_TAG }}"
+          echo "WINE_TAG=wine-${{ env.WINE_TAG }}" >> $GITHUB_ENV
+        else
+          echo "Error: Could not checkout wine version ${{ env.WINE_TAG }}"
+          echo "Available tags:"
+          git tag | head -20
+          exit 1
+        fi
+        
+        # 获取实际的提交信息
+        WINE_COMMIT=$(git rev-parse --short HEAD)
+        echo "WINE_COMMIT=$WINE_COMMIT" >> $GITHUB_ENV
+        echo "Wine commit: $WINE_COMMIT"
+        
+        cd ..
 
     - name: Setup packaging
       run: |
@@ -231,13 +231,13 @@ jobs:
           ./fix_wine9.2_mfplat.sh || echo "Fix script execution failed or already applied"
         fi
 
-    - name: Apply staging patches if requested
-      if: env.APPLY_STAGING == 'yes' && env.WINE_BRANCH == 'staging'
+    - name: Download and apply wine staging patches
+      if: env.APPLY_STAGING == 'yes'
       run: |
         cd wine
         
         WINE_VERSION="${{ env.WINE_VERSION }}"
-        echo "Applying staging patches for wine version: $WINE_VERSION"
+        echo "Attempting to apply staging patches for wine version: $WINE_VERSION"
         
         # 清理可能的旧文件
         rm -f wine-staging-*.tar.gz
@@ -248,7 +248,6 @@ jobs:
           "$WINE_VERSION"
           "v${WINE_VERSION}.0"
           "${WINE_VERSION}.0"
-          "wine-$WINE_VERSION"
         )
         
         STAGING_DOWNLOADED=false
@@ -298,27 +297,13 @@ jobs:
           else
             echo "Warning: Could not find staging directory structure"
           fi
+          
+          # 清理下载的文件
+          rm -f wine-staging-*.tar.gz
         else
           echo "Warning: Could not download staging patches for wine version $WINE_VERSION"
           echo "Available versions might not include $WINE_VERSION"
         fi
-
-    - name: Apply proton patches if selected
-      if: env.WINE_BRANCH == 'proton'
-      run: |
-        cd wine
-        echo "Applying proton-specific patches for branch: ${{ env.WINE_BRANCH }}"
-        
-        # 这里可以添加 proton 特定的补丁
-        # 例如：修复 Winlator 路径问题
-        echo "Fixing Winlator paths..."
-        find . -type f \( -name "*.c" -o -name "*.h" -o -name "*.in" -o -name "*.spec" \) -exec grep -l "/tmp" {} \; | xargs sed -i 's|/tmp/|/data/data/com.winlator/files/rootfs/usr/tmp/|g'
-        find server -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's|"/tmp"|"/data/data/com.winlator/files/rootfs/usr/tmp"|g' {} +
-        find . -name "file.c" -exec sed -i 's|"/tmp"|"/data/data/com.winlator/files/rootfs/usr/tmp"|g' {} +
-        find . -name "loader.c" -exec sed -i 's|"/tmp"|"/data/data/com.winlator/files/rootfs/usr/tmp"|g' {} +
-        find . -name "server.c" -exec sed -i 's|"/tmp"|"/data/data/com.winlator/files/rootfs/usr/tmp"|g' {} +
-        
-        echo "Proton patches applied"
 
     - name: Adjust changelog for intermediate
       if: github.event_name != 'release'
@@ -327,7 +312,8 @@ jobs:
         echo "hangover-wine (${{ env.HOVERSION }}~bookworm) UNRELEASED; urgency=low" > wine/debian/changelog.entry
         echo "" >> wine/debian/changelog.entry
         echo "  * Intermediate build ${{ env.HOVERSION }}~bookworm" >> wine/debian/changelog.entry
-        echo "  * Built with wine version ${{ env.WINE_VERSION }} (${{ env.WINE_BRANCH }})" >> wine/debian/changelog.entry
+        echo "  * Built with wine ${{ env.WINE_TAG }} (commit: ${{ env.WINE_COMMIT }})" >> wine/debian/changelog.entry
+        echo "  * Wine version: ${{ env.WINE_VERSION }}" >> wine/debian/changelog.entry
         echo "  * Staging patches: ${{ env.APPLY_STAGING }}" >> wine/debian/changelog.entry
         echo "" >> wine/debian/changelog.entry
         echo -n " -- André Zwing <nerv@dawncrow.de>  " >> wine/debian/changelog.entry
@@ -344,7 +330,8 @@ jobs:
         echo "hangover-wine (${{ env.HOVERSION }}~bookworm) UNRELEASED; urgency=low" > wine/debian/changelog.entry
         echo "" >> wine/debian/changelog.entry
         echo "  * Release ${{ env.HOVERSION }}~bookworm" >> wine/debian/changelog.entry
-        echo "  * Built with wine version ${{ env.WINE_VERSION }} (${{ env.WINE_BRANCH }})" >> wine/debian/changelog.entry
+        echo "  * Built with wine ${{ env.WINE_TAG }} (commit: ${{ env.WINE_COMMIT }})" >> wine/debian/changelog.entry
+        echo "  * Wine version: ${{ env.WINE_VERSION }}" >> wine/debian/changelog.entry
         echo "  * Staging patches: ${{ env.APPLY_STAGING }}" >> wine/debian/changelog.entry
         echo "" >> wine/debian/changelog.entry
         echo -n " -- André Zwing <nerv@dawncrow.de>  " >> wine/debian/changelog.entry
