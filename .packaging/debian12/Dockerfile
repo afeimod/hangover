@@ -60,8 +60,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gstreamer1.0-* \
     libkrb5-dev:arm64 \
     libvulkan-dev:arm64 \
-    libmpg123-dev \
-    libopenal-dev \
+    libmpg123-dev* \
+    libopenal-dev* \
     libgl-dev:arm64 \
     libgnutls28-dev:arm64 \
     libcups2-dev:arm64 \
