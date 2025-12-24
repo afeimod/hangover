@@ -87,10 +87,10 @@ jobs:
     - name: Clone Proton source
       run: |
         rm -rf wine
-        git clone https://github.com/wine-mirror/wine.git wine
+        git clone https://github.com/ValveSoftware/wine.git wine
         cd wine
         # 切换到 Proton 的最新稳定分支（根据实际情况调整）
-        git checkout wine-10.16
+        git checkout proton_9.0
 
     - name: Install build dependencies for autogen
       run: |
@@ -109,15 +109,6 @@ jobs:
         sed -i "s/HOVERSION/${HOVERSION}/g" wine/Dockerfile
         nproc
 
-    - name: Apply wine patch
-      run: |
-        cd wine
-        wget -O ffmpeg_api_fix.patch https://github.com/afeimod/linbox/raw/main/path/ffmpeg_api_fix.patch
-        if [ -f ffmpeg_api_fix.patch ]; then
-          patch -p1 < ffmpeg_api_fix.patch || echo "Patch application failed or already applied"
-        else
-          echo "Failed to download patch"
-        fi
 
     - name: Adjust changelog for intermediate
       if: github.event_name != 'release'
