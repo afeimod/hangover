@@ -139,6 +139,16 @@ jobs:
         cat wine/debian/changelog.entry wine/debian/changelog.old > wine/debian/changelog
         rm wine/debian/changelog.entry wine/debian/changelog.old
         cat wine/debian/changelog
+        
+    - name: Disable ARM64EC for now
+      run: |
+        cd wine
+        # 修改 rules 文件，移除 arm64ec
+        sed -i 's/--enable-archs=arm64ec,aarch64,i386/--enable-archs=aarch64,i386/g' debian/rules
+        # 或者修改 configure.ac
+        if [ -f configure.ac ]; then
+          sed -i 's/ARM64EC_TARGET=\[yes\]/ARM64EC_TARGET=\[no\]/g' configure.ac
+        fi
 
     - name: Build package
       run: cd wine; docker build -t wine-debian12 .
