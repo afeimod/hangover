@@ -4,12 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       hangover_version:
-        description: 'Hangover 版本号 (如: 0.9.0, 0.8.0)'
+        description: 'Hangover 版本号 (如: 0.9.0, 0.8.0) 或 latest'
         required: true
         default: 'latest'
         type: string
       wine_version:
-        description: 'Wine 版本号 (如: wine-9.10, wine-9.0, wine-8.0)'
+        description: 'Wine 版本号 (如: wine-9.10, wine-9.0, wine-8.0) 或 latest'
         required: true
         default: 'latest'
         type: string
@@ -107,7 +107,7 @@ jobs:
       run: |
         # 设置 hangover 版本
         if [ "${{ github.event.inputs.hangover_version }}" = "latest" ]; then
-          HOVERSION=$(git describe --tags --abbrev=0)
+          HOVERSION=$(git describe --tags --abbrev=0 | sed 's/hangover-//')
         else
           HOVERSION="${{ github.event.inputs.hangover_version }}"
         fi
@@ -117,10 +117,7 @@ jobs:
         # 设置 wine 版本
         if [ "${{ github.event.inputs.wine_version }}" = "latest" ]; then
           # 获取最新的 wine tag
-          git submodule update --init --recursive wine
-          cd wine
-          WINE_TAG=$(git describe --tags --abbrev=0)
-          cd ..
+          WINE_TAG="wine-9.0"  # 默认值
         else
           WINE_TAG="${{ github.event.inputs.wine_version }}"
         fi
@@ -135,8 +132,8 @@ jobs:
           WINE_VERSION="${BASH_REMATCH[1]}"
           echo "Extracted wine version: $WINE_VERSION"
         else
-          WINE_VERSION="$WINE_TAG"
-          echo "Using wine tag as version: $WINE_VERSION"
+          WINE_VERSION="9.0"
+          echo "Using default wine version: $WINE_VERSION"
         fi
         
         # 提取主次版本
@@ -157,32 +154,71 @@ jobs:
         echo "  Wine Version: $WINE_VERSION"
         echo "  Wine Major: $WINE_VERSION_MAJOR, Minor: $WINE_VERSION_MINOR"
 
-    - name: Checkout specific wine version
+    - name: Download specific wine version from AndreRH/wine
       run: |
-        echo "Checking out wine version: ${{ env.WINE_TAG }}"
-        git submodule update --init --recursive wine
+        echo "Downloading wine from AndreRH/wine repository..."
+        echo "Wine tag: ${{ env.WINE_TAG }}"
+        
+        # 清理现有的 wine 目录
+        rm -rf wine
+        mkdir -p wine
+        
         cd wine
         
-        # 获取所有远程标签
-        git fetch --tags
+        # 初始化 git 仓库
+        git init
+        git remote add origin https://github.com/AndreRH/wine.git
         
-        # 尝试切换到指定的 wine 版本
-        if git checkout "${{ env.WINE_TAG }}" 2>/dev/null; then
-          echo "Successfully checked out wine tag: ${{ env.WINE_TAG }}"
-        elif git checkout "wine-${{ env.WINE_TAG }}" 2>/dev/null; then
-          echo "Successfully checked out wine tag: wine-${{ env.WINE_TAG }}"
-          echo "WINE_TAG=wine-${{ env.WINE_TAG }}" >> $GITHUB_ENV
+        # 获取所有标签
+        echo "Fetching tags from AndreRH/wine..."
+        git fetch --tags --depth 1
+        
+        # 检查标签是否存在
+        if git show-ref --tags --quiet "refs/tags/${{ env.WINE_TAG }}"; then
+          echo "Tag ${{ env.WINE_TAG }} exists, checking out..."
+          git checkout "tags/${{ env.WINE_TAG }}" --depth 1
+        elif git show-ref --tags --quiet "refs/tags/wine-${{ env.WINE_VERSION }}"; then
+          echo "Tag wine-${{ env.WINE_VERSION }} exists, checking out..."
+          git checkout "tags/wine-${{ env.WINE_VERSION }}" --depth 1
+          echo "WINE_TAG=wine-${{ env.WINE_VERSION }}" >> $GITHUB_ENV
         else
-          echo "Error: Could not checkout wine version ${{ env.WINE_TAG }}"
-          echo "Available tags:"
-          git tag | head -20
-          exit 1
+          echo "Warning: Tag ${{ env.WINE_TAG }} not found, trying to find closest version..."
+          
+          # 获取所有标签并排序，选择最接近的版本
+          TAGS=$(git tag -l | grep -E "^wine-[0-9]+\.[0-9]+$" | sort -V -r)
+          
+          if [ -n "$TAGS" ]; then
+            CLOSEST_TAG=$(echo "$TAGS" | head -1)
+            echo "Closest tag found: $CLOSEST_TAG"
+            git checkout "tags/$CLOSEST_TAG" --depth 1
+            echo "WINE_TAG=$CLOSEST_TAG" >> $GITHUB_ENV
+            
+            # 更新版本信息
+            if [[ "$CLOSEST_TAG" =~ wine-([0-9]+\.[0-9]+) ]]; then
+              WINE_VERSION="${BASH_REMATCH[1]}"
+              echo "WINE_VERSION=$WINE_VERSION" >> $GITHUB_ENV
+              
+              WINE_VERSION_MAJOR=$(echo "$WINE_VERSION" | cut -d. -f1)
+              WINE_VERSION_MINOR=$(echo "$WINE_VERSION" | cut -d. -f2)
+              echo "WINE_VERSION_MAJOR=$WINE_VERSION_MAJOR" >> $GITHUB_ENV
+              echo "WINE_VERSION_MINOR=$WINE_VERSION_MINOR" >> $GITHUB_ENV
+            fi
+          else
+            echo "Error: No wine tags found in AndreRH/wine repository"
+            exit 1
+          fi
         fi
         
-        # 获取实际的提交信息
+        # 获取提交信息
         WINE_COMMIT=$(git rev-parse --short HEAD)
         echo "WINE_COMMIT=$WINE_COMMIT" >> $GITHUB_ENV
         echo "Wine commit: $WINE_COMMIT"
+        
+        # 显示 wine 版本信息
+        echo "Wine version details:"
+        if [ -f "VERSION" ]; then
+          cat VERSION
+        fi
         
         cd ..
 
@@ -191,16 +227,6 @@ jobs:
         cp -r .packaging/debian12/wine/* wine
         sed -i "s/HOVERSION/${{ env.HOVERSION }}/g" wine/Dockerfile
         nproc
-
-    - name: Apply wine patch
-      run: |
-        cd wine
-        wget -O wine_do_not_create_dxgi_manager2.patch https://github.com/afeimod/linbox/raw/main/path/wine_do_not_create_dxgi_manager2.patch
-        if [ -f wine_do_not_create_dxgi_manager2.patch ]; then
-          patch -p1 < wine_do_not_create_dxgi_manager2.patch || echo "Patch application failed or already applied"
-        else
-          echo "Failed to download patch"
-        fi
 
     - name: Apply version-specific fixes
       run: |
@@ -212,10 +238,7 @@ jobs:
         # 判断版本是否 >= 9.10
         if [ "${{ env.WINE_VERSION_MAJOR }}" -gt 9 ] || [ "${{ env.WINE_VERSION_MAJOR }}" -eq 9 -a "${{ env.WINE_VERSION_MINOR }}" -ge 10 ]; then
           echo "Wine version >= 9.10, applying wine_do_not_create_dxgi_manager2.patch"
-          # 确保补丁已下载
-          if [ ! -f wine_do_not_create_dxgi_manager2.patch ]; then
-            wget -O wine_do_not_create_dxgi_manager2.patch https://github.com/afeimod/linbox/raw/main/path/wine_do_not_create_dxgi_manager2.patch
-          fi
+          wget -O wine_do_not_create_dxgi_manager2.patch https://github.com/afeimod/linbox/raw/main/path/wine_do_not_create_dxgi_manager2.patch
           
           if [ -f wine_do_not_create_dxgi_manager2.patch ]; then
             echo "Applying 9.10+ patch..."
@@ -312,7 +335,7 @@ jobs:
         echo "hangover-wine (${{ env.HOVERSION }}~bookworm) UNRELEASED; urgency=low" > wine/debian/changelog.entry
         echo "" >> wine/debian/changelog.entry
         echo "  * Intermediate build ${{ env.HOVERSION }}~bookworm" >> wine/debian/changelog.entry
-        echo "  * Built with wine ${{ env.WINE_TAG }} (commit: ${{ env.WINE_COMMIT }})" >> wine/debian/changelog.entry
+        echo "  * Built with wine ${{ env.WINE_TAG }} from AndreRH/wine (commit: ${{ env.WINE_COMMIT }})" >> wine/debian/changelog.entry
         echo "  * Wine version: ${{ env.WINE_VERSION }}" >> wine/debian/changelog.entry
         echo "  * Staging patches: ${{ env.APPLY_STAGING }}" >> wine/debian/changelog.entry
         echo "" >> wine/debian/changelog.entry
@@ -330,7 +353,7 @@ jobs:
         echo "hangover-wine (${{ env.HOVERSION }}~bookworm) UNRELEASED; urgency=low" > wine/debian/changelog.entry
         echo "" >> wine/debian/changelog.entry
         echo "  * Release ${{ env.HOVERSION }}~bookworm" >> wine/debian/changelog.entry
-        echo "  * Built with wine ${{ env.WINE_TAG }} (commit: ${{ env.WINE_COMMIT }})" >> wine/debian/changelog.entry
+        echo "  * Built with wine ${{ env.WINE_TAG }} from AndreRH/wine (commit: ${{ env.WINE_COMMIT }})" >> wine/debian/changelog.entry
         echo "  * Wine version: ${{ env.WINE_VERSION }}" >> wine/debian/changelog.entry
         echo "  * Staging patches: ${{ env.APPLY_STAGING }}" >> wine/debian/changelog.entry
         echo "" >> wine/debian/changelog.entry
