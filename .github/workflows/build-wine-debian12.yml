@@ -1,0 +1,285 @@
+name: deb-wine-debian12
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - '**'
+    paths-ignore:
+      - 'benchmarks/**'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - 'README.md'
+  release:
+    types: [published]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  foundations-debian12:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [debian12]
+
+    steps:
+    - uses: actions/checkout@v1
+    - name: free disk space
+      run: |
+        sudo swapoff -a
+        sudo rm -f /swapfile
+        sudo apt clean
+        df -h
+
+    - name: Cache docker image
+      id: cache-foundation
+      uses: actions/cache@v4
+      env:
+        cache-name: cache-foundation
+      with:
+        path: foundation${{ matrix.os }}.tgz
+        key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles(format('.packaging/{0}/Dockerfile', matrix.os)) }}
+        lookup-only: true
+
+    - name: Setup packaging
+      if: ${{ steps.cache-foundation.outputs.cache-hit != 'true' }}
+      run: |
+        cp .packaging/${{ matrix.os }}/Dockerfile .
+
+    - name: Build package
+      if: ${{ steps.cache-foundation.outputs.cache-hit != 'true' }}
+      run: docker build -t foundation${{ matrix.os }} .
+
+    - name: Export docker image
+      if: ${{ steps.cache-foundation.outputs.cache-hit != 'true' }}
+      run: docker image save foundation${{ matrix.os }} | gzip -c > foundation${{ matrix.os }}.tgz
+
+  wine-debian12:
+    needs: foundations-debian12
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v1
+    - name: free disk space
+      run: |
+        sudo swapoff -a
+        sudo rm -f /swapfile
+        sudo apt clean
+        df -h
+
+    - name: Cache docker image
+      id: cache-foundation
+      uses: actions/cache@v4
+      env:
+        cache-name: cache-foundation
+      with:
+        path: foundationdebian12.tgz
+        key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('.packaging/debian12/Dockerfile') }}
+
+    - name: Import docker image
+      run: docker image load -i foundationdebian12.tgz
+
+    - name: get version
+      run: git describe --tags | sed "s/hangover-/HOVERSION=/" >> "$GITHUB_ENV"; git describe --tags | sed "s/hangover-/HOVERSION=/"
+
+    - name: get shallow submodule
+      run: git submodule update --init --recursive --depth 1 wine
+
+    - name: Setup packaging
+      run: |
+        cp -r .packaging/debian12/wine/* wine
+        sed -i "s/HOVERSION/${HOVERSION}/g" wine/Dockerfile
+        nproc
+
+    - name: Check wine source and version
+      run: |
+        cd wine
+        echo "Checking wine repository URL..."
+        git remote -v
+        
+        echo "Fetching wine version information..."
+        # 从 AndreRH/wine 仓库获取版本信息
+        WINE_VERSION_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+        
+        if [ -z "$WINE_VERSION_TAG" ]; then
+          # 如果没有标签，尝试从最近的提交中获取信息
+          echo "No tags found, trying to get version from configure.ac or VERSION file..."
+          if [ -f "VERSION" ]; then
+            WINE_VERSION=$(cat VERSION | sed 's/^wine-//i')
+            echo "Found version in VERSION file: $WINE_VERSION"
+          elif [ -f "configure.ac" ]; then
+            # 从 configure.ac 中提取版本号
+            WINE_MAJOR=$(grep -m1 "define(\[WINE_MAJOR_VERSION\]," configure.ac | tr -d '[]' | awk -F, '{print $2}' | tr -d ' )')
+            WINE_MINOR=$(grep -m1 "define(\[WINE_MINOR_VERSION\]," configure.ac | tr -d '[]' | awk -F, '{print $2}' | tr -d ' )')
+            WINE_VERSION="${WINE_MAJOR}.${WINE_MINOR}"
+            echo "Extracted version from configure.ac: $WINE_VERSION"
+          else
+            # 尝试从提交历史中获取版本信息
+            WINE_VERSION=$(git log --oneline | grep -i "wine" | head -1 | grep -o "[0-9]\+\.[0-9]\+" | head -1 || echo "8.0")
+            echo "Estimated wine version from git history: $WINE_VERSION"
+          fi
+        else
+          # 从标签中提取版本号
+          WINE_VERSION=$(echo "$WINE_VERSION_TAG" | sed 's/^wine-//i' | sed 's/^WINE-//i')
+          echo "Extracted version from tag $WINE_VERSION_TAG: $WINE_VERSION"
+        fi
+        
+        # 保存版本信息到环境变量
+        echo "WINE_VERSION=$WINE_VERSION" >> $GITHUB_ENV
+        
+        # 从版本号中提取主次版本
+        VERSION_MAJOR=$(echo "$WINE_VERSION" | cut -d. -f1)
+        VERSION_MINOR=$(echo "$WINE_VERSION" | cut -d. -f2)
+        echo "WINE_VERSION_MAJOR=$VERSION_MAJOR" >> $GITHUB_ENV
+        echo "WINE_VERSION_MINOR=$VERSION_MINOR" >> $GITHUB_ENV
+        
+        echo "Detected wine version: $WINE_VERSION"
+        echo "Major: $VERSION_MAJOR, Minor: $VERSION_MINOR"
+
+    - name: Apply wine version-specific patches
+      run: |
+        cd wine
+        
+        echo "Applying patches based on wine version: ${{ env.WINE_VERSION }}"
+        echo "Major version: ${{ env.WINE_VERSION_MAJOR }}, Minor version: ${{ env.WINE_VERSION_MINOR }}"
+        
+        # 判断版本是否 >= 9.10
+        if [ "${{ env.WINE_VERSION_MAJOR }}" -gt 9 ] || [ "${{ env.WINE_VERSION_MAJOR }}" -eq 9 -a "${{ env.WINE_VERSION_MINOR }}" -ge 10 ]; then
+          echo "Using 9.10+ version fix (wine_do_not_create_dxgi_manager2.patch)"
+          wget -O wine_do_not_create_dxgi_manager2.patch https://github.com/afeimod/linbox/raw/main/path/wine_do_not_create_dxgi_manager2.patch
+          if [ -f wine_do_not_create_dxgi_manager2.patch ]; then
+            patch -p1 < wine_do_not_create_dxgi_manager2.patch || echo "Patch application failed or already applied"
+          else
+            echo "Failed to download 9.10+ patch"
+          fi
+        else
+          echo "Using < 9.10 version fix (fix_wine9.2_mfplat.sh)"
+          wget -O fix_wine9.2_mfplat.sh https://github.com/afeimod/linbox/raw/main/path/fix_wine9.2_mfplat.sh
+          chmod +x fix_wine9.2_mfplat.sh
+          ./fix_wine9.2_mfplat.sh || echo "Fix script execution failed or already applied"
+        fi
+
+    - name: Download and apply wine staging patches
+      run: |
+        cd wine
+        
+        WINE_VERSION="${{ env.WINE_VERSION }}"
+        echo "Attempting to download staging patches for wine version: $WINE_VERSION"
+        
+        # 清理可能的旧文件
+        rm -f wine-staging-*.tar.gz
+        
+        # 尝试不同的 staging 版本格式
+        STAGING_VERSION_FORMATS=(
+          "v$WINE_VERSION"
+          "$WINE_VERSION"
+          "v${WINE_VERSION}.0"
+          "${WINE_VERSION}.0"
+        )
+        
+        STAGING_DOWNLOADED=false
+        
+        for STAGING_VERSION in "${STAGING_VERSION_FORMATS[@]}"; do
+          echo "Trying staging version: $STAGING_VERSION"
+          
+          # 尝试下载 staging 补丁
+          if wget -q "https://github.com/wine-staging/wine-staging/archive/refs/tags/${STAGING_VERSION}.tar.gz" -O "wine-staging-${WINE_VERSION}.tar.gz"; then
+            echo "Successfully downloaded staging patch for version $STAGING_VERSION"
+            STAGING_DOWNLOADED=true
+            break
+          fi
+        done
+        
+        if [ "$STAGING_DOWNLOADED" = true ]; then
+          echo "Extracting staging patches..."
+          tar -xzf "wine-staging-${WINE_VERSION}.tar.gz"
+          
+          # 查找解压后的 staging 目录
+          STAGING_DIR=$(find . -maxdepth 1 -type d -name "*staging*" | head -1)
+          
+          if [ -n "$STAGING_DIR" ] && [ -d "$STAGING_DIR/staging" ]; then
+            echo "Found staging directory: $STAGING_DIR"
+            
+            # 进入 staging 目录并应用补丁
+            cd "$STAGING_DIR/staging"
+            
+            if [ -f "patchinstall.py" ]; then
+              chmod +x patchinstall.py
+              
+              echo "Applying staging patches..."
+              # 应用所有补丁，跳过可能失败的部分
+              python3 patchinstall.py --all --destdir=../../ --no-autoconf || \
+              python3 patchinstall.py --all --destdir=../../ --no-autoconf --force || \
+              echo "Some staging patches may have failed to apply"
+              
+              echo "Staging patches applied"
+            else
+              echo "Error: patchinstall.py not found in staging directory"
+            fi
+            
+            # 返回到 wine 目录
+            cd ../..
+          else
+            echo "Warning: Could not find staging directory structure after extraction"
+            echo "Current directory contents:"
+            ls -la
+          fi
+        else
+          echo "Warning: Could not download staging patches for wine version $WINE_VERSION"
+          echo "Available versions might not include $WINE_VERSION"
+          echo "Continuing without staging patches"
+        fi
+
+    - name: Apply wine patch (original)
+      run: |
+        cd wine
+        wget -O wine_do_not_create_dxgi_manager2.patch https://github.com/afeimod/linbox/raw/main/path/wine_do_not_create_dxgi_manager2.patch
+        if [ -f wine_do_not_create_dxgi_manager2.patch ]; then
+          patch -p1 < wine_do_not_create_dxgi_manager2.patch || echo "Patch application failed or already applied"
+        else
+          echo "Failed to download patch"
+        fi
+
+    - name: Adjust changelog for intermediate
+      if: github.event_name != 'release'
+      run: |
+        cp wine/debian/changelog wine/debian/changelog.old
+        echo "hangover-wine (${HOVERSION}~bookworm) UNRELEASED; urgency=low" > wine/debian/changelog.entry
+        echo "" >> wine/debian/changelog.entry
+        echo "  * Intermediate build ${HOVERSION}~bookworm" >> wine/debian/changelog.entry
+        echo "" >> wine/debian/changelog.entry
+        echo -n " -- André Zwing <nerv@dawncrow.de>  " >> wine/debian/changelog.entry
+        LC_TIME=en_US.UTF-8 date "+%a, %d %b %Y %H:%M:%S %z" >> wine/debian/changelog.entry
+        echo "" >> wine/debian/changelog.entry
+        cat wine/debian/changelog.entry wine/debian/changelog.old > wine/debian/changelog
+        rm wine/debian/changelog.entry wine/debian/changelog.old
+        cat wine/debian/changelog
+
+    - name: Adjust changelog for release
+      if: github.event_name == 'release'
+      run: |
+        cp wine/debian/changelog wine/debian/changelog.old
+        echo "hangover-wine (${HOVERSION}~bookworm) UNRELEASED; urgency=low" > wine/debian/changelog.entry
+        echo "" >> wine/debian/changelog.entry
+        echo "  * Release ${HOVERSION}~bookworm" >> wine/debian/changelog.entry
+        echo "" >> wine/debian/changelog.entry
+        echo -n " -- André Zwing <nerv@dawncrow.de>  " >> wine/debian/changelog.entry
+        LC_TIME=en_US.UTF-8 date "+%a, %d %b %Y %H:%M:%S %z" >> wine/debian/changelog.entry
+        echo "" >> wine/debian/changelog.entry
+        cat wine/debian/changelog.entry wine/debian/changelog.old > wine/debian/changelog
+        rm wine/debian/changelog.entry wine/debian/changelog.old
+        cat wine/debian/changelog
+
+    - name: Build package
+      run: cd wine; docker build -t wine-debian12 .
+
+    - name: Extract package
+      run: docker run --rm wine-debian12 cat /opt/hangover-wine_${{ env.HOVERSION }}~bookworm_arm64.deb > hangover-wine_${{ env.HOVERSION }}~bookworm_arm64.deb
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: hangover-wine_${{ env.HOVERSION }}~bookworm_arm64.deb
+        path: hangover-wine_${{ env.HOVERSION }}~bookworm_arm64.deb
