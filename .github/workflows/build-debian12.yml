@@ -82,7 +82,15 @@ jobs:
       run: docker image load -i foundationdebian12.tgz
 
     - name: get version
-      run: git describe --tags | sed "s/hangover-/HOVERSION=/" >> "$GITHUB_ENV"; git describe --tags | sed "s/hangover-/HOVERSION=/"
+      run: |
+        # 获取版本号，确保以数字开头
+        VERSION=$(git describe --tags --always | sed -E 's/^[^0-9]*//')
+        # 如果没有数字开头的部分，添加默认版本号
+        if [[ -z "$VERSION" || "$VERSION" =~ ^[^0-9] ]]; then
+          VERSION="0.$(date +%Y%m%d).$(git rev-parse --short HEAD)"
+        fi
+        echo "HOVERSION=$VERSION" >> "$GITHUB_ENV"
+        echo "HOVERSION=$VERSION"
 
     - name: get shallow submodule
       run: git submodule update --init --recursive --depth 1 wine
@@ -105,6 +113,46 @@ jobs:
 
     - name: Adjust changelog for intermediate
       if: github.event_name != 'release'
+      run: |
+        cp wine/debian/changelog wine/debian/changelog.old
+        echo "hangover-wine (${HOVERSION}~bookworm) UNRELEASED; urgency=low" > wine/debian/changelog.entry
+        echo "" >> wine/debian/changelog.entry
+        echo "  * Intermediate build ${HOVERSION}~bookworm" >> wine/debian/changelog.entry
+        echo "" >> wine/debian/changelog.entry
+        echo -n " -- André Zwing <nerv@dawncrow.de>  " >> wine/debian/changelog.entry
+        LC_TIME=en_US.UTF-8 date "+%a, %d %b %Y %H:%M:%S %z" >> wine/debian/changelog.entry
+        echo "" >> wine/debian/changelog.entry
+        cat wine/debian/changelog.entry wine/debian/changelog.old > wine/debian/changelog
+        rm wine/debian/changelog.entry wine/debian/changelog.old
+        cat wine/debian/changelog
+
+    - name: Adjust changelog for release
+      if: github.event_name == 'release'
+      run: |
+        cp wine/debian/changelog wine/debian/changelog.old
+        echo "hangover-wine (${HOVERSION}~bookworm) bookworm; urgency=low" > wine/debian/changelog.entry
+        echo "" >> wine/debian/changelog.entry
+        echo "  * Release ${HOVERSION}~bookworm" >> wine/debian/changelog.entry
+        echo "" >> wine/debian/changelog.entry
+        echo -n " -- André Zwing <nerv@dawncrow.de>  " >> wine/debian/changelog.entry
+        LC_TIME=en_US.UTF-8 date "+%a, %d %b %Y %H:%M:%S %z" >> wine/debian/changelog.entry
+        echo "" >> wine/debian/changelog.entry
+        cat wine/debian/changelog.entry wine/debian/changelog.old > wine/debian/changelog
+        rm wine/debian/changelog.entry wine/debian/changelog.old
+        cat wine/debian/changelog
+
+    - name: Build package
+      run: cd wine; docker build -t wine-debian12 .
+
+    - name: Extract package
+      run: |
+        docker run --rm wine-debian12 cat /opt/hangover-wine_${{ env.HOVERSION }}~bookworm_arm64.deb > hangover-wine_${{ env.HOVERSION }}~bookworm_arm64.deb
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: hangover-wine_${{ env.HOVERSION }}~bookworm_arm64.deb
+        path: hangover-wine_${{ env.HOVERSION }}~bookworm_arm64.deb      if: github.event_name != 'release'
       run: |
         cp wine/debian/changelog wine/debian/changelog.old
         echo "hangover-wine (${HOVERSION}~bookworm) UNRELEASED; urgency=low" > wine/debian/changelog.entry
