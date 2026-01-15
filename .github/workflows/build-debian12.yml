@@ -152,43 +152,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: hangover-wine_${{ env.HOVERSION }}~bookworm_arm64.deb
-        path: hangover-wine_${{ env.HOVERSION }}~bookworm_arm64.deb      if: github.event_name != 'release'
-      run: |
-        cp wine/debian/changelog wine/debian/changelog.old
-        echo "hangover-wine (${HOVERSION}~bookworm) UNRELEASED; urgency=low" > wine/debian/changelog.entry
-        echo "" >> wine/debian/changelog.entry
-        echo "  * Intermediate build ${HOVERSION}~bookworm" >> wine/debian/changelog.entry
-        echo "" >> wine/debian/changelog.entry
-        echo -n " -- André Zwing <nerv@dawncrow.de>  " >> wine/debian/changelog.entry
-        LC_TIME=en_US.UTF-8 date "+%a, %d %b %Y %H:%M:%S %z" >> wine/debian/changelog.entry
-        echo "" >> wine/debian/changelog.entry
-        cat wine/debian/changelog.entry wine/debian/changelog.old > wine/debian/changelog
-        rm wine/debian/changelog.entry wine/debian/changelog.old
-        cat wine/debian/changelog
-
-    - name: Adjust changelog for release
-      if: github.event_name == 'release'
-      run: |
-        cp wine/debian/changelog wine/debian/changelog.old
-        echo "hangover-wine (${HOVERSION}~bookworm) UNRELEASED; urgency=low" > wine/debian/changelog.entry
-        echo "" >> wine/debian/changelog.entry
-        echo "  * Release ${HOVERSION}~bookworm" >> wine/debian/changelog.entry
-        echo "" >> wine/debian/changelog.entry
-        echo -n " -- André Zwing <nerv@dawncrow.de>  " >> wine/debian/changelog.entry
-        LC_TIME=en_US.UTF-8 date "+%a, %d %b %Y %H:%M:%S %z" >> wine/debian/changelog.entry
-        echo "" >> wine/debian/changelog.entry
-        cat wine/debian/changelog.entry wine/debian/changelog.old > wine/debian/changelog
-        rm wine/debian/changelog.entry wine/debian/changelog.old
-        cat wine/debian/changelog
-
-    - name: Build package
-      run: cd wine; docker build -t wine-debian12 .
-
-    - name: Extract package
-      run: docker run --rm wine-debian12 cat /opt/hangover-wine_${{ env.HOVERSION }}~bookworm_arm64.deb > hangover-wine_${{ env.HOVERSION }}~bookworm_arm64.deb
-
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: hangover-wine_${{ env.HOVERSION }}~bookworm_arm64.deb
         path: hangover-wine_${{ env.HOVERSION }}~bookworm_arm64.deb
