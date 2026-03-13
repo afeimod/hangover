@@ -1,0 +1,166 @@
+name: deb-winlator-glibc
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - '**'
+    paths-ignore:
+      - 'benchmarks/**'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - 'README.md'
+  release:
+    types: [published]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  foundations-debian12:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [debian12]
+
+    steps:
+    - uses: actions/checkout@v1
+    - name: 释放磁盘空间
+      run: |
+        sudo swapoff -a
+        sudo rm -f /swapfile
+        sudo apt clean
+        df -h
+
+    - name: 缓存 Docker 镜像
+      id: cache-foundation
+      uses: actions/cache@v4
+      env:
+        cache-name: cache-foundation
+      with:
+        path: foundation${{ matrix.os }}.tgz
+        key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles(format('.packaging/{0}/Dockerfile', matrix.os)) }}
+        lookup-only: true
+
+    - name: 准备打包环境
+      if: ${{ steps.cache-foundation.outputs.cache-hit != 'true' }}
+      run: |
+        cp .packaging/${{ matrix.os }}/Dockerfile .
+
+    - name: 构建基础镜像
+      if: ${{ steps.cache-foundation.outputs.cache-hit != 'true' }}
+      run: docker build -t foundation${{ matrix.os }} .
+
+    - name: 导出 Docker 镜像
+      if: ${{ steps.cache-foundation.outputs.cache-hit != 'true' }}
+      run: docker image save foundation${{ matrix.os }} | gzip -c > foundation${{ matrix.os }}.tgz
+
+  wine-debian12:
+    needs: foundations-debian12
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v1
+    - name: 释放磁盘空间
+      run: |
+        sudo swapoff -a
+        sudo rm -f /swapfile
+        sudo apt clean
+        df -h
+
+    - name: 缓存 Docker 镜像
+      id: cache-foundation
+      uses: actions/cache@v4
+      env:
+        cache-name: cache-foundation
+      with:
+        path: foundationdebian12.tgz
+        key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('.packaging/debian12/Dockerfile') }}
+
+    - name: 导入 Docker 镜像
+      run: docker image load -i foundationdebian12.tgz
+
+    - name: 获取版本号
+      run: |
+        # 获取版本号，确保以数字开头
+        VERSION=$(git describe --tags --always | sed -E 's/^[^0-9]*//')
+        # 如果没有数字开头的部分，添加默认版本号
+        if [[ -z "$VERSION" || "$VERSION" =~ ^[^0-9] ]]; then
+          VERSION="0.$(date +%Y%m%d).$(git rev-parse --short HEAD)"
+        fi
+        echo "HOVERSION=$VERSION" >> "$GITHUB_ENV"
+        echo "HOVERSION=$VERSION"
+
+    - name: 克隆 Wine 源码（使用指定仓库）
+      run: |
+        rm -rf wine
+        git clone --depth 1 https://github.com/afeimod/wine-arm.git wine
+
+    - name: 复制打包配置
+      run: |
+        cp -r .packaging/debian12/wine/* wine
+        sed -i "s/HOVERSION/${HOVERSION}/g" wine/Dockerfile
+        nproc
+
+    - name: 应用 Wine 补丁
+      run: |
+        cd wine
+        wget -O wine_do_not_create_dxgi_manager2.patch https://github.com/afeimod/linbox/raw/main/path/wine_do_not_create_dxgi_manager2.patch
+        if [ -f wine_do_not_create_dxgi_manager2.patch ]; then
+          patch -p1 < wine_do_not_create_dxgi_manager2.patch || echo "补丁应用失败或已应用"
+        else
+          echo "下载补丁失败"
+        fi
+
+    - name: 修改临时目录路径（适配 Termux）
+      run: |
+        cd wine
+        find . -type f \( -name "*.c" -o -name "*.h" -o -name "*.in" -o -name "*.spec" \) -exec grep -l "/tmp" {} \; | xargs sed -i 's|/tmp/|/data/data/com.winlator/files/imagefs/usr/tmp/|g'
+            find server -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's|"/tmp"|"/data/data/com.winlator/files/imagefs/usr/tmp"|g' {} +
+            find . -name "file.c" -exec sed -i 's|"/tmp"|"/data/data/com.winlator/files/imagefs/usr/tmp"|g' {} +
+            find . -name "loader.c" -exec sed -i 's|"/tmp"|"/data/data/com.winlator/files/imagefs/usr/tmp"|g' {} +
+            find . -name "server.c" -exec sed -i 's|"/tmp"|"/data/data/com.winlator/files/imagefs/usr/tmp"|g' {} +
+
+    - name: 调整变更日志（中间构建）
+      if: github.event_name != 'release'
+      run: |
+        cp wine/debian/changelog wine/debian/changelog.old
+        echo "hangover-wine (${HOVERSION}~bookworm) UNRELEASED; urgency=low" > wine/debian/changelog.entry
+        echo "" >> wine/debian/changelog.entry
+        echo "  * Intermediate build ${HOVERSION}~bookworm" >> wine/debian/changelog.entry
+        echo "" >> wine/debian/changelog.entry
+        echo -n " -- André Zwing <nerv@dawncrow.de>  " >> wine/debian/changelog.entry
+        LC_TIME=en_US.UTF-8 date "+%a, %d %b %Y %H:%M:%S %z" >> wine/debian/changelog.entry
+        echo "" >> wine/debian/changelog.entry
+        cat wine/debian/changelog.entry wine/debian/changelog.old > wine/debian/changelog
+        rm wine/debian/changelog.entry wine/debian/changelog.old
+        cat wine/debian/changelog
+
+    - name: 调整变更日志（发布）
+      if: github.event_name == 'release'
+      run: |
+        cp wine/debian/changelog wine/debian/changelog.old
+        echo "hangover-wine (${HOVERSION}~bookworm) bookworm; urgency=low" > wine/debian/changelog.entry
+        echo "" >> wine/debian/changelog.entry
+        echo "  * Release ${HOVERSION}~bookworm" >> wine/debian/changelog.entry
+        echo "" >> wine/debian/changelog.entry
+        echo -n " -- André Zwing <nerv@dawncrow.de>  " >> wine/debian/changelog.entry
+        LC_TIME=en_US.UTF-8 date "+%a, %d %b %Y %H:%M:%S %z" >> wine/debian/changelog.entry
+        echo "" >> wine/debian/changelog.entry
+        cat wine/debian/changelog.entry wine/debian/changelog.old > wine/debian/changelog
+        rm wine/debian/changelog.entry wine/debian/changelog.old
+        cat wine/debian/changelog
+
+    - name: 构建包
+      run: cd wine; docker build -t wine-debian12 .
+
+    - name: 提取包
+      run: |
+        docker run --rm wine-debian12 cat /opt/hangover-wine_${{ env.HOVERSION }}~bookworm_arm64.deb > hangover-wine_${{ env.HOVERSION }}~bookworm_arm64.deb
+
+    - name: 上传构件
+      uses: actions/upload-artifact@v4
+      with:
+        name: hangover-wine_${{ env.HOVERSION }}~bookworm_arm64.deb
+        path: hangover-wine_${{ env.HOVERSION }}~bookworm_arm64.deb
