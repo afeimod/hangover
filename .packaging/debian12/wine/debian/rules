@@ -16,8 +16,8 @@ override_dh_autoreconf:
 	:
 
 override_dh_auto_configure:
-	# Run configure
-	export LDFLAGS="-Wl,--dynamic-linker=/data/data/com.termux/files/usr/glibc/lib/ld-linux-aarch64.so.1 -Wl,-rpath=/data/data/com.termux/files/usr/glibc/lib"
+	# Run configure with correct LDFLAGS
+	export LDFLAGS="-Wl,--dynamic-linker=/data/data/com.termux/files/usr/glibc/lib/ld-linux-aarch64.so.1 -Wl,-rpath=/data/data/com.termux/files/usr/glibc/lib"; \
 	./configure --prefix=/data/data/com.termux/files/usr/glibc \
 		--with-mingw=clang \
 		--enable-archs=arm64ec,aarch64,i386 \
