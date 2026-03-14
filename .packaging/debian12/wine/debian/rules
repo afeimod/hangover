@@ -20,6 +20,7 @@ override_dh_auto_configure:
 	export LDFLAGS="-Wl,--dynamic-linker=/data/data/com.winlator/files/imagefs/usr/lib/ld-linux-aarch64.so.1 -Wl,-rpath=/data/data/com.winlator/files/imagefs/usr/lib"; \
 	./configure --prefix=/data/data/com.winlator/files/imagefs \
 		--with-mingw=clang \
+        --enable-wine64 \
 		--enable-archs=arm64ec,aarch64,i386 \
 		--enable-tools \
 		--disable-tests \
